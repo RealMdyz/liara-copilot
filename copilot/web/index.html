@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>لیارا کوپایلوت</title>
+<link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet">
+<style>
+:root{
+  --bg:#0d1117; --panel:#151b24; --panel2:#1b2330; --line:#263042; --text:#e6edf3; --muted:#8b98a9;
+  --brand:#3d7cff; --green:#2ec27e; --yellow:#f5c211; --red:#ff5d5d; --violet:#a97bff;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:Vazirmatn,Tahoma,sans-serif;font-size:14.5px;height:100vh;display:flex}
+code,.mono{font-family:ui-monospace,Menlo,Consolas,monospace;direction:ltr;unicode-bidi:embed;font-size:12.5px}
+a{color:#7aa7ff}
+/* sidebar */
+aside{width:330px;background:var(--panel);border-left:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden}
+.brand{padding:18px 18px 12px;border-bottom:1px solid var(--line)}
+.brand h1{margin:0;font-size:18px;display:flex;align-items:center;gap:8px}
+.brand .logo{width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,var(--brand),var(--violet));display:grid;place-items:center;font-weight:800}
+.brand p{margin:6px 0 0;color:var(--muted);font-size:12.5px}
+.badges{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+.badge{font-size:11px;padding:3px 8px;border-radius:99px;background:var(--panel2);border:1px solid var(--line);color:var(--muted)}
+.badge.live{color:var(--green);border-color:#2ec27e55}.badge.mock{color:var(--yellow);border-color:#f5c21155}
+.sec{padding:14px 16px;border-bottom:1px solid var(--line)}
+.sec h3{margin:0 0 10px;font-size:12.5px;color:var(--muted);font-weight:600;display:flex;justify-content:space-between;align-items:center}
+.sec h3 button{background:none;border:0;color:var(--muted);cursor:pointer;font-family:inherit}
+.appcard{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;cursor:pointer}
+.appcard:hover{border-color:#3d7cff88}
+.appcard .top{display:flex;justify-content:space-between;align-items:center}
+.dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-left:6px}
+.meta{color:var(--muted);font-size:12px;margin-top:4px}
+.bar{height:5px;background:#0b0f15;border-radius:9px;overflow:hidden;margin-top:5px}
+.bar i{display:block;height:100%;border-radius:9px}
+.legend{font-size:12px;color:var(--muted);line-height:1.9}
+#audit{flex:1;overflow:auto;padding:14px 16px;font-size:12px;color:var(--muted)}
+#audit div{padding:5px 0;border-bottom:1px dashed var(--line)}
+/* main */
+main{flex:1;display:flex;flex-direction:column;min-width:0}
+#chat{flex:1;overflow:auto;padding:24px 8% 12px}
+.msg{max-width:780px;margin:0 0 14px;line-height:1.85;white-space:pre-wrap;word-wrap:break-word}
+.msg.user{margin-right:auto;margin-left:0;background:var(--brand);color:#fff;padding:10px 14px;border-radius:14px 14px 4px 14px;max-width:560px;width:fit-content}
+.msg.assistant{background:var(--panel);border:1px solid var(--line);padding:12px 16px;border-radius:14px 14px 14px 4px}
+.timeline{max-width:780px;margin:0 0 14px;border-right:2px solid var(--line);padding-right:14px}
+.step{color:var(--muted);font-size:13px;padding:3px 0;display:flex;gap:8px;align-items:flex-start}
+.step .ic{width:18px;text-align:center;flex:none}
+.step.done{color:#b7c3d1}.step.error{color:var(--red)}.step.warn{color:var(--yellow)}
+.step pre{margin:4px 0 0;background:#0b0f15;padding:6px 8px;border-radius:6px;font-size:11.5px;color:#9fb0c3;direction:ltr;text-align:left;white-space:pre-wrap}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid #3d7cff55;border-top-color:var(--brand);border-radius:50%;animation:sp .8s linear infinite;margin-top:4px}
+@keyframes sp{to{transform:rotate(360deg)}}
+.card{max-width:780px;margin:0 0 16px;background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.card .hd{padding:12px 16px;font-weight:700;display:flex;justify-content:space-between;align-items:center;background:var(--panel2);border-bottom:1px solid var(--line)}
+.card .bd{padding:12px 16px}
+.approval{border-color:#f5c21166;box-shadow:0 0 0 3px #f5c21112}
+.approval.critical{border-color:#ff5d5d88}
+.kv{display:grid;grid-template-columns:110px 1fr;gap:6px 10px;font-size:13.5px;margin-bottom:10px}
+.kv b{color:var(--muted);font-weight:500}
+.inputs label{display:block;font-size:12.5px;color:var(--muted);margin:8px 0 4px}
+.inputs input{width:100%;background:#0b0f15;border:1px solid var(--line);color:var(--text);padding:8px 10px;border-radius:8px;font-family:ui-monospace,monospace;direction:ltr}
+.btns{display:flex;gap:8px;margin-top:12px}
+button.ok,button.no{border:0;border-radius:9px;padding:9px 18px;font-family:inherit;font-size:14px;cursor:pointer;font-weight:600}
+button.ok{background:var(--green);color:#06210f}button.no{background:#2a3446;color:var(--text)}
+button:disabled{opacity:.45;cursor:default}
+.resolved{font-size:13px;margin-top:10px;font-weight:600}
+.hyp{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:10px;background:var(--panel2)}
+.hyp .t{display:flex;justify-content:space-between;gap:10px;font-weight:700}
+.conf{font-size:12px;color:var(--muted);font-weight:500;white-space:nowrap}
+.hyp ul{margin:8px 0 4px;padding-right:18px;color:#c4cfdc;font-size:13px;line-height:1.8}
+.hyp .fix{font-size:13px;color:#9fe3bf;margin-top:6px}
+.hyp .code{font-size:12.5px;color:var(--violet);margin-top:4px}
+.stats{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.stat{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px 12px;min-width:110px}
+.stat small{display:block;color:var(--muted);font-size:11.5px}.stat span{font-size:16px;font-weight:700}
+.ba{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:center;text-align:center}
+.ba .box{background:var(--panel2);border-radius:10px;padding:10px}
+.lim{max-width:780px;margin:0 0 14px;font-size:13px;background:#2a2410;border:1px solid #f5c21144;color:#f3dc8a;padding:10px 14px;border-radius:10px}
+.result{max-width:780px;margin:0 0 14px}
+.result table{width:100%;border-collapse:collapse;font-size:13px;background:var(--panel);border-radius:10px;overflow:hidden}
+.result td,.result th{padding:7px 10px;border-bottom:1px solid var(--line);text-align:right}
+.result th{color:var(--muted);font-weight:500;background:var(--panel2)}
+.logs{background:#0b0f15;border:1px solid var(--line);border-radius:10px;padding:10px;max-height:260px;overflow:auto;direction:ltr;text-align:left;font-family:ui-monospace,monospace;font-size:12px;color:#aab6c4;white-space:pre-wrap}
+/* composer */
+.chips{display:flex;gap:8px;flex-wrap:wrap;padding:0 8% 10px}
+.chip{background:var(--panel);border:1px solid var(--line);color:#c4cfdc;border-radius:99px;padding:6px 12px;font-size:12.5px;cursor:pointer;font-family:inherit}
+.chip:hover{border-color:var(--brand)}
+.composer{padding:0 8% 20px;display:flex;gap:10px}
+.composer textarea{flex:1;resize:none;background:var(--panel);border:1px solid var(--line);color:var(--text);border-radius:14px;padding:13px 16px;font-family:inherit;font-size:14.5px;height:52px}
+.composer textarea:focus{outline:none;border-color:var(--brand)}
+.composer button{background:var(--brand);color:#fff;border:0;border-radius:14px;padding:0 22px;font-family:inherit;font-size:14.5px;cursor:pointer;font-weight:600}
+.empty{text-align:center;color:var(--muted);margin-top:8vh}
+.empty h2{color:var(--text);font-size:22px;margin-bottom:6px}
+.faults{display:none;gap:6px;flex-wrap:wrap}
+.faults button{font-size:11px;background:#2a2410;border:1px solid #f5c21144;color:#f3dc8a;border-radius:6px;padding:3px 7px;cursor:pointer;font-family:inherit}
+@media (max-width:900px){aside{display:none}#chat,.chips,.composer{padding-left:16px;padding-right:16px}}
+</style>
+</head>
+<body>
+<aside>
+  <div class="brand">
+    <h1><span class="logo">ل</span> لیارا کوپایلوت</h1>
+    <p>همکار فنی شما برای انتشار، پایش و رفع مشکل سایت روی لیارا</p>
+    <div class="badges" id="badges"></div>
+  </div>
+  <div class="sec">
+    <h3>سلامت سرویس‌ها <button onclick="loadDash()" title="بروزرسانی">↻</button></h3>
+    <div id="dash"><div class="meta">در حال بارگذاری…</div></div>
+    <div class="faults" id="faults"></div>
+  </div>
+  <div class="sec legend">
+    <h3>سطح ریسک عملیات</h3>
+    🟢 خواندنی — خودکار اجرا می‌شود<br>
+    🟡 کم‌ریسک — خودکار + گزارش<br>
+    🔴 حساس — فقط با تأیید شما<br>
+    ⛔ غیرقابل بازگشت — تأیید صریح
+  </div>
+  <h3 style="margin:12px 16px 0;font-size:12.5px;color:var(--muted)">گزارش عملیات (Audit log)</h3>
+  <div id="audit"></div>
+</aside>
+<main>
+  <div id="chat">
+    <div class="empty" id="empty">
+      <h2>سلام! چه کمکی از دستم برمی‌آید؟ 👋</h2>
+      <p>پروژه‌تان را بدهید تا منتشرش کنم، یا اگر سایت مشکل دارد بگویید تا علتش را پیدا کنم.</p>
+    </div>
+  </div>
+  <div class="chips" id="chips"></div>
+  <div class="composer">
+    <textarea id="inp" placeholder="مثلاً: سایت shop-demo کند شده  —  یا:  پروژه‌ی ‎./victim-app‎ را دیپلوی کن"></textarea>
+    <button id="send">ارسال</button>
+  </div>
+</main>
+<script>
+let SID=null, INFO={}, curTimeline=null;
+const $=s=>document.querySelector(s), chat=$('#chat');
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fa=n=>n==null?'—':String(n).replace(/\d/g,d=>'۰۱۲۳۴۵۶۷۸۹'[d]);
+function md(t){
+  let h=esc(t);
+  h=h.replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/(https?:\/\/[^\s<)]+)/g,'<a href="$1" target="_blank">$1</a>')
+     .replace(/‎([^‎]+)‎/g,'<code>$1</code>');
+  return h;
+}
+function scroll(){chat.scrollTop=chat.scrollHeight}
+function add(el){$('#empty')?.remove();chat.appendChild(el);scroll();return el}
+function div(cls,html){const d=document.createElement('div');d.className=cls;d.innerHTML=html;return d}
+
+async function init(){
+  INFO=await (await fetch('/api/info')).json();
+  $('#badges').innerHTML=(INFO.mock?'<span class="badge mock">حالت شبیه‌سازی</span>':'<span class="badge live">● متصل به API لیارا</span>')+
+    `<span class="badge">${INFO.llm?'مغز: '+esc(INFO.model):'مغز: قواعد داخلی'}</span>`;
+  SID=(await (await fetch('/api/session',{method:'POST'})).json()).sid;
+  const es=new EventSource('/api/events/'+SID); es.onmessage=e=>onEvent(JSON.parse(e.data));
+  const chips=['وضعیت همه‌ی اپ‌ها','سایت shop-demo کند شده، مشکل کجاست؟','پروژه‌ی ./victim-app را دیپلوی کن','لاگ‌های shop-demo','پلن‌های لیارا'];
+  $('#chips').innerHTML=chips.map(c=>`<button class="chip">${esc(c)}</button>`).join('');
+  document.querySelectorAll('.chip').forEach(b=>b.onclick=()=>{$('#inp').value=b.textContent;send()});
+  if(INFO.mock){const f=$('#faults');f.style.display='flex';
+    f.innerHTML='<span class="meta" style="width:100%">شبیه‌سازی خطا (برای تمرین):</span>'+
+    [['missing_env','خطای ۵۰۰'],['memory_leak','نشتی RAM'],['cpu','CPU بالا'],['bad_release','ریلیز خراب'],['port','پورت اشتباه'],['','سالم']]
+    .map(([k,l])=>`<button onclick="fault('${k}')">${l}</button>`).join('')}
+  loadDash(); loadAudit(); setInterval(loadDash,20000);
+}
+async function fault(k){await fetch('/api/mock/fault',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({app:'shop-demo',fault:k||null})});loadDash()}
+async function loadDash(){
+  const d=await (await fetch('/api/dashboard')).json();
+  if(d.error){$('#dash').innerHTML=`<div class="meta">${esc(d.error)}</div>`;return}
+  if(!d.apps.length){$('#dash').innerHTML='<div class="meta">هنوز اپی ندارید.</div>';return}
+  $('#dash').innerHTML=d.apps.map(a=>{
+    const ok=a.http>=200&&a.http<400, slow=a.latency_ms>1500;
+    const col=!ok?'var(--red)':slow?'var(--yellow)':'var(--green)';
+    const bar=(v,l)=>v==null?'':`<div class="meta">${l} ${fa(Math.round(v))}٪</div><div class="bar"><i style="width:${Math.min(v,100)}%;background:${v>85?'var(--red)':v>65?'var(--yellow)':'var(--green)'}"></i></div>`;
+    return `<div class="appcard" onclick="ask('وضعیت ${a.name}')"><div class="top"><b><span class="dot" style="background:${col}"></span>${esc(a.name)}</b><span class="meta">${esc(a.plan||'')}</span></div>
+      <div class="meta">HTTP ${fa(a.http)} · ${fa(a.latency_ms)}ms · ${esc(a.platform||'')}</div>${bar(a.cpu,'CPU')}${bar(a.mem,'RAM')}</div>`}).join('');
+}
+async function loadAudit(){
+  const a=await (await fetch('/api/audit')).json();
+  const L={approval_requested:'درخواست تأیید',approval_granted:'✅ تأیید شد',approval_denied:'❌ رد شد',tool_executed:'اجرا'};
+  $('#audit').innerHTML=a.reverse().map(r=>`<div><span class="mono">${esc(r.ts.slice(11))}</span> · ${L[r.event]||r.event} · <code>${esc(r.tool||'')}</code> ${r.status==='error'?'⚠️':''}</div>`).join('')||'—';
+}
+function ask(t){$('#inp').value=t;send()}
+async function send(){
+  const t=$('#inp').value.trim(); if(!t)return; $('#inp').value='';
+  add(div('msg user',md(t))); curTimeline=null;
+  await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sid:SID,text:t})});
+}
+$('#send').onclick=send;
+$('#inp').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
+
+function timeline(){if(!curTimeline||!curTimeline.isConnected||chat.lastElementChild!==curTimeline)curTimeline=add(div('timeline',''));return curTimeline}
+function finishSpinners(){document.querySelectorAll('.step .spin').forEach(s=>{const st=s.closest('.step');st.classList.add('done');s.outerHTML='✓'})}
+const TOOLFA={account_overview:'خواندن اطلاعات حساب',list_apps:'دریافت لیست اپ‌ها',app_status:'بررسی وضعیت اپ',get_logs:'دریافت لاگ‌ها',get_metrics:'دریافت متریک‌ها',
+ list_releases:'دریافت تاریخچه‌ی انتشار',list_plans:'دریافت پلن‌ها',analyze_project:'تحلیل پروژه',diagnose:'عیب‌یابی',verify_fix:'راستی‌آزمایی',health_check_all:'پایش همه‌ی اپ‌ها',
+ list_domains:'دامنه‌ها',domain_dns_guide:'آماده‌سازی راهنمای DNS',audit_log:'گزارش عملیات',change_plan_guide:'راهنمای تغییر پلن',create_app:'ساخت اپ',deploy:'انتشار',
+ set_env:'تنظیم متغیر محیطی',restart_app:'ری‌استارت',start_app:'روشن کردن',stop_app:'خاموش کردن',update_port:'تغییر پورت',rollback:'بازگشت به نسخه‌ی قبل',add_domain:'اتصال دامنه',delete_app:'حذف اپ'};
+
+function onEvent(ev){
+  switch(ev.type){
+  case 'message': finishSpinners(); curTimeline=null; add(div('msg assistant',md(ev.text))); break;
+  case 'thinking': break;
+  case 'busy': if(!ev.value){finishSpinners();loadAudit();loadDash()} $('#send').disabled=ev.value; break;
+  case 'tool': {
+    const tl=timeline();
+    if(ev.status==='running'){ tl.appendChild(div('step',`<span class="ic"><span class="spin"></span></span><span>${esc(TOOLFA[ev.name]||ev.name)} ${ev.risk!=='read'?'<span class="conf">('+(ev.risk==='high'?'🔴':ev.risk==='low'?'🟡':'⛔')+')</span>':''}</span>`)).dataset.tool=ev.name }
+    else { const st=[...tl.querySelectorAll('.step')].reverse().find(s=>s.dataset.tool===ev.name&&s.querySelector('.spin'));
+      if(st){st.classList.add(ev.status);st.querySelector('.ic').textContent=ev.status==='done'?'✓':ev.status==='warn'?'!':'✗'} }
+    scroll(); break }
+  case 'step': {
+    const tl=timeline();
+    const last=[...tl.querySelectorAll('.step.sub')].pop();
+    if(last&&last.querySelector('.spin')&&ev.status!=='running'){last.classList.add(ev.status);last.querySelector('.ic').textContent=ev.status==='done'?'✓':ev.status==='warn'?'!':'✗';last.querySelector('.tx').textContent=ev.text}
+    else{ if(last&&last.querySelector('.spin')){last.classList.add('done');last.querySelector('.ic').textContent='✓'}
+      tl.appendChild(div('step sub '+(ev.status!=='running'?ev.status:''),`<span class="ic">${ev.status==='running'?'<span class="spin"></span>':ev.status==='done'?'✓':ev.status==='warn'?'!':'✗'}</span><span><span class="tx">${esc(ev.text)}</span>${ev.detail?'<pre>'+esc(ev.detail)+'</pre>':''}</span>`))}
+    scroll(); break }
+  case 'approval': curTimeline=null; renderApproval(ev); break;
+  case 'approval_result': {const c=document.getElementById('ap-'+ev.id); if(c&&!c.querySelector('.resolved')){c.querySelector('.btns')?.remove();c.querySelector('.bd').appendChild(div('resolved',ev.approved?'✅ تأیید شد — در حال اجرا':'❌ رد شد'))} loadAudit(); break}
+  case 'diagnosis': curTimeline=null; renderDiagnosis(ev.report); break;
+  case 'verification': curTimeline=null; renderVerify(ev.result); break;
+  case 'health': break;
+  case 'limitation': add(div('lim','ℹ️ <b>محدودیت API لیارا:</b> '+md(ev.text))); curTimeline=null; break;
+  case 'result': curTimeline=null; renderResult(ev.tool,ev.data); break;
+  }
+}
+function renderApproval(a){
+  const crit=a.risk==='critical';
+  const inputs=(a.inputs||[]).map(i=>`<label>${esc(i.key)} ${i.required?'<span style="color:var(--yellow)">(لازم)</span>':'(اختیاری — خالی بماند یعنی همان مقدار پیشنهادی)'}</label><input data-k="${esc(i.key)}" ${i.required?'data-req=1':''} placeholder="${esc(i.hint||'')}" autocomplete="off">`).join('');
+  const c=add(div('card approval'+(crit?' critical':''),`
+   <div class="hd"><span>نیاز به تأیید شما</span><span class="conf">${esc(a.risk_label)}</span></div>
+   <div class="bd"><div class="kv"><b>چه کاری:</b><span>${md(a.title)}</span><b>اثر:</b><span>${md(a.impact)}</span><b>راه برگشت:</b><span>${md(a.rollback)}</span></div>
+   ${inputs?'<div class="inputs">'+inputs+'</div>':''}
+   <div class="btns"><button class="ok">${crit?'بله، مطمئنم — حذف کن':'تأیید و اجرا'}</button><button class="no">انصراف</button></div></div>`));
+  c.id='ap-'+a.id;
+  c.querySelector('.ok').onclick=async()=>{
+    const values={}; let miss=false;
+    c.querySelectorAll('input[data-k]').forEach(i=>{values[i.dataset.k]=i.value.trim(); if(i.dataset.req&&!i.value.trim()){miss=true;i.style.borderColor='var(--red)'}});
+    if(miss)return;
+    if(crit&&!confirm('این عملیات غیرقابل بازگشت است. ادامه می‌دهید؟'))return;
+    await fetch('/api/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sid:SID,id:a.id,approved:true,values})})};
+  c.querySelector('.no').onclick=()=>fetch('/api/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sid:SID,id:a.id,approved:false})});
+}
+function renderDiagnosis(r){
+  const s=r.summary,p=s.probe||{},h=s.http||{},m=s.metrics||{};
+  const label={healthy:'🟢 سالم',degraded:'🟡 عملکرد مختل',down:'🔴 از دسترس خارج / خطا'}[s.status];
+  const stats=[['وضعیت',label],['کد پاسخ',(p.statuses||[]).join('، ')],['زمان پاسخ',fa(p.median_ms)+'ms'],
+    ...(m.cpu!=null?[['CPU',fa(m.cpu)+'٪']]:[]),...(m.memory!=null?[['RAM',fa(m.memory)+'٪']]:[]),
+    ...(h.requests?[['نرخ خطا در لاگ',fa(Math.round(h.error_rate*100))+'٪']]:[])].map(([k,v])=>`<div class="stat"><small>${k}</small><span>${v}</span></div>`).join('');
+  const hyps=r.hypotheses.map((x,i)=>`<div class="hyp"><div class="t"><span>${i+1}. ${esc(x.title)}</span><span class="conf">احتمال ٪${fa(Math.round(x.confidence*100))}</span></div>
+     <div class="bar"><i style="width:${x.confidence*100}%;background:${i?'#5b6b80':'var(--brand)'}"></i></div>
+     <div class="meta" style="margin-top:6px">${esc(x.explain)}</div>
+     <ul>${x.evidence.map(e=>`<li>${md(e)}</li>`).join('')}</ul>
+     ${x.fixes.length?`<div class="fix">🛠 راه‌حل: ${x.fixes.map(f=>esc(TOOLFA[f.tool]||f.tool)+(f.note?' ('+esc(f.note)+')':'')).join(' / ')}</div>`:''}
+     ${x.permanent_fix?`<div class="fix" style="color:#c4cfdc">🔧 راه‌حل دائمی: ${md(x.permanent_fix)}</div>`:''}
+     ${(x.code||[]).map(c=>`<div class="code">📍 <code>${esc(c.file)}:${c.line}</code> ${c.url?`<a href="${c.url}" target="_blank">مشاهده در گیت‌هاب</a>`:''}</div>`).join('')}</div>`).join('');
+  const lim=(s.limitations||[]).length?`<div class="meta" style="margin-top:6px">ℹ️ ${s.limitations.map(esc).join(' | ')}</div>`:'';
+  add(div('card',`<div class="hd"><span>🩺 گزارش عیب‌یابی</span><span class="conf">${esc(s.plan||'')}</span></div><div class="bd"><div class="stats">${stats}</div>${hyps||'<div class="meta">علتی پیدا نشد؛ سرویس سالم است.</div>'}${lim}</div>`));
+}
+function renderVerify(v){
+  const ok=v.fixed;
+  add(div('card',`<div class="hd"><span>${ok?'✅ راستی‌آزمایی: مشکل برطرف شد':'⚠️ راستی‌آزمایی: هنوز کامل حل نشده'}</span></div><div class="bd">
+   <div class="ba"><div class="box"><div class="meta">قبل</div><b>${(v.before.statuses||[]).join('، ')}</b><div class="meta">${fa(v.before.median_ms)}ms</div></div><div style="font-size:22px">←</div>
+   <div class="box"><div class="meta">بعد</div><b style="color:${ok?'var(--green)':'var(--yellow)'}">${(v.after.statuses||[]).join('، ')}</b><div class="meta">${fa(v.after.median_ms)}ms</div></div></div></div>`));
+}
+function renderResult(tool,d){
+  if(d&&(d.error||d.rejected))return;
+  if(tool==='get_logs'){add(div('result',`<div class="logs">${esc((d.lines||[]).join('\n'))||'لاگی نیست'}</div>`));return}
+  if(tool==='list_apps'&&Array.isArray(d)){add(div('result',`<table><tr><th>اپ</th><th>پلتفرم</th><th>پلن</th><th>وضعیت</th></tr>${d.map(a=>`<tr><td><a href="${a.url}" target="_blank">${esc(a.name)}</a></td><td>${esc(a.platform)}</td><td>${esc(a.plan)}</td><td>${esc(a.status)}</td></tr>`).join('')}</table>`));return}
+  if(tool==='list_plans'&&Array.isArray(d)){add(div('result',`<table><tr><th>پلن</th><th>RAM</th><th>CPU</th><th>قیمت ماهانه (تومان)</th></tr>${d.map(p=>`<tr><td>${esc(p.id)}</td><td>${fa(p.ram_gb)} GB</td><td>${fa(p.cpu)}</td><td>${fa(p.price?.toLocaleString())}</td></tr>`).join('')}</table>`));return}
+  if(tool==='domain_dns_guide'&&d.option_B){add(div('result',`<table><tr><th>نوع رکورد</th><th>نام</th><th>مقدار</th></tr>${d.option_B.records.map(r=>`<tr><td>${esc(r.type)}</td><td><code>${esc(r.name)}</code></td><td><code>${esc(r.value)}</code></td></tr>`).join('')}</table>`))}
+}
+init();
+</script>
+</body>
+</html>
