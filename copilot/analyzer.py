@@ -90,6 +90,8 @@ def detect_platform(root: Path) -> tuple[str, list[str]]:
         return "go", ["go.mod پیدا شد"]
     if has("Dockerfile"):
         return "docker", ["Dockerfile پیدا شد"]
+    if any(p for p in root.glob("*.py")):
+        return "python", ["فایل‌های پایتون پیدا شد (بدون requirements.txt)"]
     if has("index.html"):
         return "static", ["فقط فایل‌های HTML/CSS/JS"]
     return "docker", ["نوع پروژه مشخص نشد؛ بهتر است Dockerfile اضافه شود"]
@@ -255,32 +257,81 @@ def analyze(source: str, plans: dict | None = None) -> dict:
     examples = example_env(root)
     dotenv = dotenv_values(root)
     needs = estimate_needs(root, platform)
+    from .runtime import plan_runtime
+    rt = plan_runtime(root, platform)
+    if rt.get("port"):
+        port, port_src = rt["port"], ("liara.json" if rt["source"] == "liara.json" else "تحلیل دستور اجرا")
+    if not rt.get("is_web", True):
+        port, port_src = None, "برنامه وب‌سرور نیست"
     rec = recommend_plan(plans or {}, needs["ram_gb"]) if plans is not None else None
     warnings = []
     if not (root / ".gitignore").exists():
         warnings.append("فایل ‎.gitignore‎ ندارید؛ ممکن است فایل‌های اضافه آپلود شوند.")
     if (root / ".env").exists():
         warnings.append("فایل ‎.env‎ در پروژه هست؛ آن را آپلود نمی‌کنم و مقادیرش را به‌صورت متغیر محیطی امن تنظیم می‌کنیم.")
-    if platform == "node" and "start" not in _read_json(root / "package.json").get("scripts", {}):
-        warnings.append("اسکریپت start در package.json تعریف نشده؛ لیارا برای اجرا به ‎npm start‎ نیاز دارد.")
+    warnings += rt.get("warnings", [])
     return {
         "path": str(root), "platform": platform, "platform_fa": PLATFORM_FA.get(platform, platform),
         "reasons": reasons, "port": port, "port_source": port_src,
         "env_vars": {k: {"used_at": envs.get(k, ".env.example"), "example": examples.get(k, ""),
                          "in_dotenv": k in dotenv}
                      for k in list(envs) + [k for k in examples if k not in envs and k not in SKIP_ENVS]},
-        "needs": needs, "plan": rec, "warnings": warnings,
+        "needs": needs, "plan": rec, "warnings": warnings, "runtime": rt,
     }
 
 
-def package(root: str) -> str:
-    """Create a tar.gz like liara-cli does, skipping heavy / secret files."""
+def _ignore_patterns(root: Path) -> list[str]:
+    pats: list[str] = []
+    for name in (".liaraignore", ".gitignore"):
+        p = root / name
+        if p.exists():
+            pats += [l.strip() for l in p.read_text(errors="ignore").splitlines() if l.strip() and not l.startswith("#")]
+            if name == ".liaraignore":
+                break  # like liara-cli, .liaraignore replaces .gitignore
+    return pats
+
+
+def _ignored(rel: str, pats: list[str]) -> bool:
+    import fnmatch
+    parts = rel.split("/")
+    for pat in pats:
+        if pat.startswith("!"):
+            continue
+        pt = pat.strip("/")
+        if pat.startswith("/"):
+            if fnmatch.fnmatch(rel, pt) or rel.startswith(pt + "/"):
+                return True
+        elif "/" in pt:
+            if fnmatch.fnmatch(rel, pt) or rel.startswith(pt + "/"):
+                return True
+        elif any(fnmatch.fnmatch(part, pt) for part in parts):
+            return True
+    return False
+
+
+def package(root: str, inject_requirements: list[str] | None = None) -> str:
+    """Create a tar.gz like liara-cli does: honours .liaraignore/.gitignore, never ships .env files,
+    and can add missing packages to requirements.txt *inside the archive only* (user files untouched)."""
+    import io
     root_p = Path(root)
+    pats = _ignore_patterns(root_p)
     fd, out = tempfile.mkstemp(suffix=".tar.gz", prefix="copilot-")
     os.close(fd)
     with tarfile.open(out, "w:gz") as tar:
         for f in iter_files(root_p):
-            if f.name in IGNORE_FILES:
+            rel = str(f.relative_to(root_p)).replace(os.sep, "/")
+            if f.name in IGNORE_FILES or f.name.startswith(".env") and f.name not in (".env.example", ".env.sample"):
                 continue
-            tar.add(f, arcname=str(f.relative_to(root_p)))
+            if rel == "requirements.txt" and inject_requirements:
+                continue
+            if pats and _ignored(rel, pats):
+                continue
+            tar.add(f, arcname=rel)
+        if inject_requirements:
+            req = root_p / "requirements.txt"
+            base = req.read_text(errors="ignore").rstrip() + "\n" if req.exists() else ""
+            data = (base + "\n".join(inject_requirements) + "\n").encode()
+            ti = tarfile.TarInfo("requirements.txt")
+            ti.size = len(data)
+            tar.addfile(ti, io.BytesIO(data))
     return out

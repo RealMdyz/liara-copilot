@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
@@ -59,13 +60,11 @@ SECRETY = ("SECRET", "PASSWORD", "PASS", "TOKEN", "KEY", "PRIVATE")
 
 
 async def prepare_deploy(ctx: "Ctx", args: dict) -> dict:
-    """Make sure the user is asked for every environment variable the project needs.
+    """List every environment variable the project uses so the user can fill them in the approval card.
 
-    Sources, in priority order:
-      1. values the user already gave (in chat / by the LLM)        -> optional input, pre-filled
-      2. the project's own .env file (never uploaded)                -> optional input, pre-filled
-      3. already configured on the Liara app                         -> kept, not asked again
-      4. otherwise                                                   -> REQUIRED input in the approval card
+    All of them are OPTIONAL: the user may leave any empty and set it later ("متغیر X را بگذار ...").
+    Sources, in priority order: value the user gave in chat -> project's own .env (pre-filled) ->
+    already set on the Liara app (shown as 'already set', not re-sent) -> empty.
     Example values from .env.example are only shown as a hint, never used silently.
     """
     source = args.get("source")
@@ -81,33 +80,36 @@ async def prepare_deploy(ctx: "Ctx", args: dict) -> dict:
     on_liara: set = set()
     if not args.get("create"):
         try:
-            on_liara = {e["key"] for e in await ctx.client.get_envs(args["app"])}
+            on_liara = {e["key"] for e in await ctx.client.get_envs(args["app"]) if e.get("value") not in (None, "")}
         except Exception:
             pass
     keys = list(dict.fromkeys(list(an.get("env_vars", {})) + list(args.get("envs") or {}) + list(dotenv)))
     envs, meta = {}, {}
     for k in keys:
         info = an.get("env_vars", {}).get(k, {})
-        ex = info.get("example", "")
-        where = info.get("used_at", "")
+        ex, where = info.get("example", ""), info.get("used_at", "")
+        hint = f"استفاده در: {where}" if where else ""
         if k in given:
-            envs[k], meta[k] = given[k], {"required": False, "hint": "مقدار داده‌شده در گفت‌وگو (برای تغییر، مقدار جدید بنویسید)"}
+            envs[k], meta[k] = given[k], {"required": False, "state": "given",
+                                          "hint": "مقدار گفته‌شده در گفت‌وگو" + (f" · {hint}" if hint else "")}
         elif k in dotenv and dotenv[k]:
-            envs[k], meta[k] = dotenv[k], {"required": False, "hint": "از فایل ‎.env‎ پروژه‌ی شما خوانده شد (خالی = همان مقدار)"}
+            envs[k], meta[k] = dotenv[k], {"required": False, "state": "dotenv",
+                                           "hint": "از فایل ‎.env‎ پروژه (خالی بگذارید = همین مقدار)"}
         elif k in on_liara:
-            continue
+            envs[k], meta[k] = "<keep>", {"required": False, "state": "on_liara", "on_liara": True,
+                                         "hint": "روی لیارا تنظیم شده؛ خالی بگذارید تا تغییر نکند"}
         else:
-            envs[k] = f"<{k}>"
-            hint = f"در کد: {where}" if where else ""
             if ex and not any(w in k.upper() for w in SECRETY):
                 hint += (" · " if hint else "") + f"نمونه: {ex}"
-            meta[k] = {"required": True, "hint": hint or "مقدار را وارد کنید"}
+            envs[k], meta[k] = f"<{k}>", {"required": False, "state": "missing",
+                                         "hint": (hint or "") + (" · " if hint else "") + "اختیاری؛ می‌توانید بعداً هم بدهید"}
     args = {**args, "envs": envs or None, "_env_meta": meta, "_analysis": an}
     args.setdefault("platform", an["platform"])
-    args.setdefault("port", an["port"])
+    if an.get("port") and not args.get("port"):
+        args["port"] = an["port"]
     if args.get("create") and not args.get("plan_id"):
         args["plan_id"] = (an.get("plan") or {}).get("id")
-    ctx.state["env_kept_on_liara"] = sorted(on_liara & set(keys))
+    ctx.state["last_env_meta"] = meta
     return args
 
 
@@ -195,9 +197,24 @@ async def analyze_project(ctx: Ctx, source: str):
 @tool("diagnose",
       "عیب‌یابی کامل SRE: لاگ، وضعیت، ریلیزها، متریک و تست HTTP را جمع می‌کند و علت‌های محتمل را با شواهد و راه‌حل اولویت‌بندی می‌کند. برای «سایت کند است»، «خطای ۵۰۰»، «سایت بالا نمی‌آید» استفاده کن.",
       {"app": APP, "symptom": {"type": "string", "description": "توصیف مشکل از زبان کاربر"}}, required=("app",))
-async def diagnose(ctx: Ctx, app: str, symptom: str = ""):
-    await ctx.step("جمع‌آوری شواهد: وضعیت سرویس، لاگ‌ها، ریلیزها، متریک‌ها و تست مستقیم سایت")
+async def diagnose(ctx: Ctx, app: str, symptom: str = "", _build_tail: list | None = None):
+    await ctx.step("جمع‌آوری شواهد: وضعیت سرویس، لاگ‌ها، رویدادها، ریلیزها، متریک‌ها، متغیرهای محیطی و تست مستقیم سایت")
     ev = await diagnosis.collect_evidence(ctx.client, app)
+    src = app_source(ctx, app)
+    if src:
+        ev["source"] = src
+        try:
+            an = ctx.state.get("analysis") if (ctx.state.get("analysis") or {}).get("source") == src else \
+                await asyncio.to_thread(analyzer.analyze, src, None)
+            ev["runtime"] = an.get("runtime")
+        except Exception:
+            pass
+    try:
+        ev["env_check"] = await _env_check(ctx, app)
+    except Exception:
+        pass
+    if _build_tail:
+        ev["logs"] = ev["logs"] + [{"ts": 0, "line": f"[build] {l}", "releaseId": None} for l in _build_tail]
     await ctx.step(f"{len(ev['logs'])} خط لاگ و {len(ev['releases'])} ریلیز بررسی شد", "done")
     await ctx.step("تحلیل شواهد و رتبه‌بندی علت‌های محتمل")
     rep = diagnosis.analyze(ev)
@@ -206,6 +223,74 @@ async def diagnose(ctx: Ctx, app: str, symptom: str = ""):
     await ctx.step(f"{n} علت محتمل پیدا شد" if n else "مشکلی پیدا نشد", "done")
     await ctx.emit({"type": "diagnosis", "app": app, "report": rep})
     return rep
+
+
+from . import config as _config  # noqa: E402
+APP_SOURCES_FILE = os.path.join(_config.DATA_DIR, "app_sources.json")
+
+
+def _load_sources() -> dict:
+    try:
+        import json
+        with open(APP_SOURCES_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def remember_source(ctx: Ctx, app: str, source: str):
+    """Remember which project folder/repo an app was deployed from (survives restarts)."""
+    import json
+    ctx.state.setdefault("app_sources", {})[app] = source
+    data = _load_sources()
+    data[app] = source
+    try:
+        os.makedirs(os.path.dirname(APP_SOURCES_FILE), exist_ok=True)
+        with open(APP_SOURCES_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=1)
+    except OSError:
+        pass
+
+
+def app_source(ctx: Ctx, app: str) -> str | None:
+    return (ctx.state.get("app_sources") or {}).get(app) or _load_sources().get(app)
+
+
+SUSPICIOUS = re.compile(r"^(<.*>|changeme|change_me|your[_-].*|xxx+|todo|example|test|placeholder|\*+|none|null)$", re.I)
+
+
+async def _env_check(ctx: Ctx, app: str, source: str | None = None) -> dict:
+    """Compare env vars the code uses with what is set on Liara. Values are never returned."""
+    source = source or app_source(ctx, app)
+    on = {e["key"]: (e.get("value") or "") for e in await ctx.client.get_envs(app)}
+    needed: dict = {}
+    if source:
+        an = ctx.state.get("analysis") if (ctx.state.get("analysis") or {}).get("source") == source else \
+            await asyncio.to_thread(analyzer.analyze, source, None)
+        needed = an.get("env_vars", {})
+    missing = [k for k in needed if k not in on]
+    empty = [k for k, v in on.items() if not str(v).strip()]
+    suspicious = [k for k, v in on.items() if str(v).strip() and
+                  (SUSPICIOUS.match(str(v).strip()) or (needed.get(k, {}).get("example") and v == needed[k]["example"]))]
+    rows = [{"key": k, "status": "missing", "used_at": needed[k].get("used_at")} for k in missing]
+    rows += [{"key": k, "status": "empty", "used_at": needed.get(k, {}).get("used_at")} for k in empty]
+    rows += [{"key": k, "status": "suspicious", "used_at": needed.get(k, {}).get("used_at")} for k in suspicious]
+    rows += [{"key": k, "status": "ok", "used_at": needed.get(k, {}).get("used_at")} for k in on
+             if k not in empty and k not in suspicious]
+    return {"app": app, "source_known": bool(source), "missing": missing, "empty": empty,
+            "suspicious": suspicious, "rows": rows}
+
+
+@tool("check_envs",
+      "بررسی متغیرهای محیطی اپ: کدام‌ها در کد استفاده شده ولی روی لیارا نیستند، کدام خالی‌اند و کدام مقدار مشکوک "
+      "(نمونه/پیش‌فرض) دارند. مقدارها را برنمی‌گرداند. بعد از دیپلوی یا وقتی برنامه خطا می‌دهد استفاده کن.",
+      {"app": APP, "source": {"type": "string", "description": "مسیر پروژه (اختیاری؛ اگر قبلاً دیپلوی شده لازم نیست)"}},
+      required=("app",))
+async def check_envs(ctx: Ctx, app: str, source: str | None = None):
+    res = await _env_check(ctx, app, source)
+    if not res["source_known"]:
+        res["note"] = "مسیر پروژه‌ی این اپ را نمی‌دانم؛ فقط متغیرهای خالی/مشکوک روی لیارا بررسی شد."
+    return res
 
 
 @tool("verify_fix", "بعد از اقدام اصلاحی، دوباره شواهد را جمع می‌کند و با قبل مقایسه می‌کند تا مطمئن شود مشکل حل شده.",
@@ -318,11 +403,17 @@ async def create_app(ctx: Ctx, name: str, platform: str, plan_id: str):
 def _deploy_approval(a):
     an = a.get("_analysis") or {}
     n_env = len(a.get("envs") or {})
+    rt = (an.get("runtime") or {})
+    start = a.get("start_command") or ((rt.get("args") or [None])[0])
     return (f"انتشار پروژه روی اپ «{a['app']}»" + (" (اپ جدید ساخته می‌شود)" if a.get("create") else ""),
-            f"پلتفرم {a.get('platform') or an.get('platform')}، پورت {a.get('port') or an.get('port')}"
+            f"پلتفرم {a.get('platform') or an.get('platform')}، "
+            + (f"پورت {a.get('port') or an.get('port')}" if (a.get('port') or an.get('port')) else "بدون پورت (برنامه‌ی غیر وب)")
             + (f"، پلن {a.get('plan_id')}" if a.get("create") else "")
-            + (f"، {n_env} متغیر محیطی (پایین همین کارت)" if n_env else "، بدون متغیر محیطی جدید")
-            + ". دیپلوی بدون قطعی انجام می‌شود اما نسخه‌ی فعلی جایگزین می‌شود.",
+            + (f"، {n_env} متغیر محیطی اختیاری (پایین همین کارت)" if n_env else "، بدون متغیر محیطی")
+            + ". دیپلوی بدون قطعی انجام می‌شود اما نسخه‌ی فعلی جایگزین می‌شود."
+            + (f"\nدستور اجرا: {start}" if start else "")
+            + (f"\nافزودن به requirements (فقط در بسته‌ی آپلود): {', '.join(rt['inject_requirements'])}" if rt.get("inject_requirements") else "")
+            + "".join(f"\n• {n}" for n in rt.get("notes", [])),
             "در صورت مشکل، به نسخه‌ی قبلی rollback می‌کنم.")
 
 
@@ -331,16 +422,20 @@ def _deploy_approval(a):
       {"source": {"type": "string", "description": "مسیر پوشه یا URL گیت"}, "app": APP,
        "create": {"type": "boolean", "description": "اگر اپ وجود ندارد، ساخته شود"},
        "plan_id": {"type": "string"}, "platform": {"type": "string"}, "port": {"type": "integer"},
-       "envs": {"type": "object", "description": "متغیرهای محیطی {KEY: VALUE}"}},
+       "envs": {"type": "object", "description": "فقط مقدارهایی که کاربر صریحاً گفته {KEY: VALUE}"},
+       "start_command": {"type": "string", "description": "دستور اجرای سفارشی؛ فقط اگر تحلیل/عیب‌یابی نشان داد پیش‌فرض اشتباه است"}},
       risk=Risk.HIGH, required=("source", "app"), approval=_deploy_approval, prepare=prepare_deploy)
 async def deploy(ctx: Ctx, source: str, app: str, create: bool = False, plan_id: str | None = None,
-                 platform: str | None = None, port: int | None = None, envs: dict | None = None):
+                 platform: str | None = None, port: int | None = None, envs: dict | None = None,
+                 start_command: str | None = None):
     an = ctx.state.get("analysis")
     if not an or an.get("source") != source:
         an = await asyncio.to_thread(analyzer.analyze, source, await _paid_plans(ctx))
         an["source"] = source
+    rt = an.get("runtime") or {}
     platform = platform or an["platform"]
-    port = port or an["port"]
+    port = port or an.get("port")
+    args = [start_command] if start_command else rt.get("args")
     if create:
         plan_id = plan_id or an["plan"]["id"]
         await ctx.step(f"ساخت اپ {app} روی پلن {plan_id} (انتخاب خودکار بسته‌ی امکانات و شبکه‌ی خصوصی)")
@@ -355,19 +450,25 @@ async def deploy(ctx: Ctx, source: str, app: str, create: bool = False, plan_id:
                 await ctx.step(f"نام «{app}» قبلاً در لیارا توسط کاربر دیگری گرفته شده", "error")
                 return {"error": f"نام «{app}» در لیارا آزاد نیست؛ نام دیگری انتخاب کنید (مثلاً {app}-{int(time.time()) % 10000})."}
             await ctx.step("اپ از قبل وجود دارد؛ همان را به‌روزرسانی می‌کنم", "done")
+    remember_source(ctx, app, source)
+    envs = {k: str(v) for k, v in (envs or {}).items() if v not in (None, "") and not str(v).startswith("<")}
     if envs:
         await ctx.step(f"تنظیم {len(envs)} متغیر محیطی (مقادیر در لاگ ذخیره نمی‌شوند)")
-        await ctx.client.set_envs(app, {k: str(v) for k, v in envs.items()})
+        await ctx.client.set_envs(app, envs)
         await ctx.step("متغیرها تنظیم شد", "done")
-    await ctx.step("بسته‌بندی سورس (بدون node_modules، .git و .env)")
-    archive = await asyncio.to_thread(analyzer.package, an["path"])
+    inject = rt.get("inject_requirements") or []
+    await ctx.step("بسته‌بندی سورس (با رعایت ‎.gitignore‎ و بدون ‎.env‎)"
+                   + (f" + افزودن {', '.join(inject)} به requirements" if inject else ""))
+    archive = await asyncio.to_thread(analyzer.package, an["path"], inject)
     size = os.path.getsize(archive) / 1e6
     await ctx.step(f"بسته آماده شد ({size:.1f}MB)", "done")
     await ctx.step("آپلود سورس به لیارا")
     sid = await ctx.client.upload_source(app, archive)
     await ctx.step("آپلود کامل شد", "done")
-    await ctx.step("شروع build و انتشار")
-    rel = await ctx.client.create_release(app, sid, platform, port)
+    run_desc = f"اجرا با ‎{args[0]}‎" if args else "دستور اجرای پیش‌فرض پلتفرم"
+    await ctx.step(f"شروع build و انتشار — {run_desc}" + (f"، پورت {port}" if port else "، بدون پورت (غیر وب)"))
+    rel = await ctx.client.create_release(app, sid, platform, port, platform_config=rt.get("platform_config") or {},
+                                          args=args)
     rid = rel.get("releaseID") or rel.get("_id") or (rel.get("release") or {}).get("_id")
     state, last, t0, tail = "", "", time.time(), []
     while time.time() - t0 < 900:
@@ -375,26 +476,36 @@ async def deploy(ctx: Ctx, source: str, app: str, create: bool = False, plan_id:
         state = str(r.get("state", "")).upper()
         try:
             bl = await ctx.client.build_logs(rid)
-            tail = [o.get("line", "") for o in bl.get("buildOutput", [])][-5:] or tail
+            tail = [o.get("line", "") for o in bl.get("buildOutput", [])][-8:] or tail
         except Exception:
             pass
         if state != last:
             fa = {"BUILDING": "در حال build", "PUSHING": "ذخیره‌ی image", "DEPLOYING": "در حال اجرا روی سرور",
-                  "READY": "آماده"}.get(state, state)
-            await ctx.step(f"وضعیت ریلیز: {fa}", "done" if state == "READY" else "running",
+                  "READY": "آماده", "UNHEALTHY": "برنامه بالا آمد ولی به بررسی سلامت جواب نداد",
+                  "FAILED": "ناموفق"}.get(state, state)
+            await ctx.step(f"وضعیت ریلیز: {fa}", "done" if state == "READY" else "error" if state in ("FAILED", "UNHEALTHY") else "running",
                            detail="\n".join(tail[-3:]) if tail else None)
             last = state
         if state in ("READY", "FAILED", "UNHEALTHY", "CANCELED"):
             break
         await asyncio.sleep(0.3 if getattr(ctx.client, "is_mock", False) else 4)
     ok = state == "READY"
-    pr = await diagnosis.probe(ctx.client, app) if ok else {}
-    result = {"release_id": rid, "state": state, "url": app_url(app), "http_check": pr, "build_tail": tail}
-    if not ok:
-        await ctx.step("انتشار ناموفق بود؛ عیب‌یابی خودکار را شروع می‌کنم", "error")
-        result["auto_diagnosis"] = await diagnose(ctx, app, "deploy failed")
+    is_web = rt.get("is_web", True)
+    pr = await diagnosis.probe(ctx.client, app) if ok and is_web else {}
+    result = {"release_id": rid, "state": state, "url": app_url(app) if is_web else None, "http_check": pr,
+              "build_tail": tail, "start": args[0] if args else "default", "port": port}
+    missing_env = [k for k, m in (ctx.state.get("last_env_meta") or {}).items() if k not in envs and not m.get("on_liara")]
+    if missing_env:
+        result["unset_env_vars"] = missing_env
+    if not ok or (is_web and pr and not pr.get("ok")):
+        await ctx.step("انتشار سالم نبود؛ لاگ‌های همین نسخه را برای پیدا کردن علت می‌خوانم", "error")
+        if not getattr(ctx.client, "is_mock", False):
+            await asyncio.sleep(8)  # let the runtime logs of the failed release arrive
+        result["auto_diagnosis"] = await diagnose(ctx, app, "deploy failed", _build_tail=tail)
     else:
-        await ctx.step(f"سایت بالا آمد: {app_url(app)}", "done")
+        await ctx.step(f"سایت بالا آمد: {app_url(app)}" if is_web else "برنامه اجرا شد (بدون وب‌سرور)", "done")
+        if missing_env:
+            await ctx.step(f"این متغیرها خالی ماندند: {', '.join(missing_env)} — هر وقت مقدارشان را بدهید تنظیم می‌کنم", "warn")
     return result
 
 

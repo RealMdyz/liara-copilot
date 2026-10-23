@@ -91,7 +91,10 @@ ENV_MISSING_RE = [
 ]
 OOM_RE = re.compile(r"(heap out of memory|OOMKilled|MemoryError|Killed|out of memory)", re.I)
 MODULE_RE = re.compile(r"(Cannot find module '([^']+)'|ModuleNotFoundError: No module named '([^']+)')")
-LISTEN_RE = re.compile(r"(?:listening|running|started) on (?:port )?:?(\d{2,5})", re.I)
+LISTEN_RE = re.compile(r"(?:listening|running|started|serving|bound)\b[^\n]{0,40}?(?:port\s*|://[\w.\-\[\]]+:|:)(\d{2,5})\b", re.I)
+LOCALHOST_RE = re.compile(r"(?:running|listening|serving|started|booting)[^\n]{0,40}(?:127\.0\.0\.1|localhost)[:\s](\d{2,5})?", re.I)
+ENTRY_RE = re.compile(r"(?:can't open file ['\"]?([^'\"\s]+)|No such file or directory: ['\"]([^'\"]+\.py)|Error: Cannot find module ['\"](/[^'\"]+)['\"])")
+NOCMD_RE = re.compile(r"(?:(\w+): (?:command )?not found|exec: \"?(\w+)\"?: executable file not found)")
 DB_RE = re.compile(r"(ECONNREFUSED|could not connect to server|Connection refused|ETIMEDOUT|getaddrinfo ENOTFOUND)")
 HTTP_LINE_RE = re.compile(r"\b(GET|POST|PUT|DELETE|PATCH) (\S+) (\d{3}) (\d+)ms")
 
@@ -213,7 +216,7 @@ def analyze(ev: dict) -> dict:
         evid = [f"آخرین ریلیز ({rel[0].get('tag') or rel[0].get('_id')}) در وضعیت {rel[0].get('state')}"]
         evid += [f"لاگ: {l.strip()}" for l in _find(ev, MODULE_RE, 2)]
         fixes = [{"tool": "rollback", "args": {"app": app, "release_id": good["_id"]}}] if good else []
-        add("bad_release", "آخرین نسخه‌ی منتشرشده خراب است", 0.88, evid, fixes,
+        add("bad_release", "آخرین نسخه‌ی منتشرشده خراب است", 0.88 if good else 0.55, evid, fixes,
             "نسخه‌ی جدید بعد از دیپلوی سالم بالا نیامده؛ سریع‌ترین راه برگرداندن نسخه‌ی سالم قبلی است.",
             permanent="ماژول/وابستگی جاافتاده را به package.json یا requirements.txt اضافه کنید و دوباره دیپلوی کنید.")
     elif _find(ev, MODULE_RE):
@@ -223,10 +226,56 @@ def analyze(ev: dict) -> dict:
             "برنامه به کتابخانه‌ای نیاز دارد که در فایل وابستگی‌ها تعریف نشده.",
             permanent="آن را به فایل وابستگی‌ها اضافه کنید و دوباره دیپلوی کنید.")
 
+    # 5b. wrong entry file / start command
+    src = ev.get("source")
+    rt = ev.get("runtime") or {}
+    el = _find(ev, ENTRY_RE, 2)
+    if el:
+        mm = ENTRY_RE.search(el[-1])
+        f = next(g for g in mm.groups() if g)
+        cmd = (rt.get("args") or [None])[0]
+        add("entry", "فایل/دستور اجرای برنامه پیدا نشد", 0.92,
+            [f"لاگ: {el[-1].strip()}", f"لیارا تلاش کرد ‎{f}‎ را اجرا کند"],
+            ([{"tool": "deploy", "args": {"source": src, "app": app, "start_command": cmd},
+               "note": f"انتشار دوباره با دستور ‎{cmd}‎"}] if src and cmd else []),
+            "لیارا برای پلتفرم Python به‌طور پیش‌فرض ‎python3 main.py‎ را اجرا می‌کند؛ اگر فایل اصلی اسم دیگری دارد "
+            "یا برنامه با uvicorn/gunicorn اجرا می‌شود، باید دستور اجرا مشخص شود.",
+            permanent="در ‎liara.json‎ پروژه فیلد ‎args‎ را با دستور اجرای درست بگذارید، مثلاً "
+                      "‎{\"args\": [\"uvicorn main:app --host 0.0.0.0 --port 8000\"], \"port\": 8000}‎")
+    nc = _find(ev, NOCMD_RE, 1)
+    if nc and not el:
+        mm = NOCMD_RE.search(nc[-1])
+        prog = next(g for g in mm.groups() if g)
+        add("module", f"برنامه‌ی ‎{prog}‎ روی سرور نصب نیست", 0.85, [f"لاگ: {nc[-1].strip()}"], [],
+            f"دستور اجرا از ‎{prog}‎ استفاده می‌کند ولی این پکیج نصب نشده.",
+            permanent=f"‎{prog}‎ را به ‎requirements.txt‎ (یا package.json) اضافه کنید و دوباره منتشر کنید.")
+
+    # 5c. server bound to localhost inside the container
+    lh = _find(ev, LOCALHOST_RE, 1)
+    if lh:
+        add("host_binding", "برنامه فقط روی 127.0.0.1 گوش می‌دهد", 0.93,
+            [f"لاگ: {lh[-1].strip()}", "داخل کانتینر لیارا، آدرس 127.0.0.1 از بیرون قابل دسترسی نیست"],
+            ([{"tool": "deploy", "args": {"source": src, "app": app, "start_command": (rt.get("args") or [None])[0]},
+               "note": "انتشار دوباره با اجرای روی 0.0.0.0"}] if src and rt.get("args") else []),
+            "به همین دلیل بررسی سلامت لیارا به برنامه نمی‌رسد و نسخه UNHEALTHY / خطای 502 می‌شود.",
+            permanent="در کد، host را ‎0.0.0.0‎ بگذارید (مثلاً ‎uvicorn.run(app, host=\"0.0.0.0\", port=8000)‎).")
+
+    # 5d. environment variables the code needs but the app does not have
+    ec = ev.get("env_check") or {}
+    unset = (ec.get("missing") or []) + (ec.get("empty") or [])
+    if unset and not any(h["key"] == "missing_env" for h in hyps):
+        failing = not pr.get("ok") or str((ev["releases"] or [{}])[0].get("state", "")).upper() in ("UNHEALTHY", "FAILED")
+        add("env_unset", f"{len(unset)} متغیر محیطی مقدار ندارد", 0.75 if failing else 0.35,
+            [f"در کد استفاده شده ولی روی لیارا تنظیم نشده: {', '.join(unset)}"]
+            + ([f"مقدار مشکوک (نمونه/پیش‌فرض): {', '.join(ec['suspicious'])}"] if ec.get("suspicious") else []),
+            [{"tool": "set_env", "args": {"app": app, "variables": {k: f"<{k}>" for k in unset}},
+              "note": "مقدارها را در کارت تأیید وارد کنید"}],
+            "اگر برنامه هنگام شروع به این متغیرها نیاز داشته باشد، بالا نمی‌آید یا بخشی از آن خطا می‌دهد.")
+
     # 6. port mismatch
     listen = [LISTEN_RE.search(l) for l in _lines(ev)]
     ports = {int(x.group(1)) for x in listen if x}
-    if ports and d.get("port") and d.get("port") not in ports:
+    if ports and d.get("port") and d.get("port") not in ports and not lh:
         real = sorted(ports)[-1]
         add("port", "پورت برنامه با پورت تنظیم‌شده در لیارا یکی نیست", 0.9,
             [f"برنامه روی پورت {real} اجرا می‌شود", f"لیارا ترافیک را به پورت {d.get('port')} می‌فرستد"],

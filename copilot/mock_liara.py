@@ -268,9 +268,10 @@ class MockLiara:
         self.sources[sid] = archive_path
         return sid
 
-    async def create_release(self, app, source_id, platform, port, envs=None, message="", platform_config=None):
+    async def create_release(self, app, source_id, platform, port, envs=None, message="", platform_config=None, args=None):
         a = self._app(app)
-        a["port"] = port
+        a["port"] = port or a["port"]
+        a["last_release_body"] = {"port": port, "args": args, "platformConfig": platform_config}
         rid = self._new_release(app, "BUILDING")
         self.releases[rid]["_progress"] = 0
         return {"releaseID": rid}

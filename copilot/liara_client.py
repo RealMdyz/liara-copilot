@@ -196,11 +196,15 @@ class LiaraClient:
                                    files={"file": ("source.tar.gz", f, "application/gzip")})
         return data.get("sourceID") or data.get("_id") or data.get("id")
 
-    async def create_release(self, app: str, source_id: str, platform: str, port: int,
+    async def create_release(self, app: str, source_id: str, platform: str, port: int | None,
                              envs: dict | None = None, message: str = "Deployed by Liara Copilot",
-                             platform_config: dict | None = None) -> dict:
-        body = {"build": {"cache": True}, "port": port, "type": platform, "message": message,
+                             platform_config: dict | None = None, args: list | None = None) -> dict:
+        body = {"build": {"cache": True}, "type": platform, "message": message,
                 "sourceID": source_id, "platformConfig": platform_config or {}}
+        if port:
+            body["port"] = port
+        if args:
+            body["args"] = args
         if envs:
             body["envs"] = envs
         return await self._req("POST", f"/v2/projects/{app}/releases", json=body)

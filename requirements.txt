@@ -6,4 +6,5 @@ mcp>=1.2,<2
 python-dotenv>=1.0
 pydantic>=2
 paramiko>=3.4
+python-multipart>=0.0.9
 pytest>=8

@@ -172,10 +172,30 @@ header .sub{color:var(--muted);font-size:12px;margin-right:10px;font-weight:400}
 .chips{display:flex;gap:8px;overflow-x:auto;padding-bottom:10px}
 .qchip{flex:none;background:var(--panel);border:1px solid var(--line);color:var(--text2);border-radius:99px;padding:7px 13px;font-size:12.5px;cursor:pointer}
 .qchip:hover{border-color:var(--brand);color:var(--text)}
-.box{display:flex;gap:10px;align-items:flex-end;background:var(--panel);border:1px solid var(--line2);border-radius:18px;padding:8px 8px 8px 8px;transition:.15s}
-.box:focus-within{border-color:var(--brand);box-shadow:0 0 0 4px #5b8cff22}
-.box textarea{flex:1;resize:none;background:none;border:0;color:var(--text);font-family:inherit;font-size:14.5px;padding:8px 10px;max-height:160px;line-height:1.8}
-.box textarea:focus{outline:none}
+.cbox{display:flex;gap:8px;align-items:flex-end;background:var(--panel);border:1px solid var(--line2);border-radius:18px;padding:8px;transition:.15s}
+.cbox:focus-within{border-color:var(--brand);box-shadow:0 0 0 4px #5b8cff22}
+.cbox.rec{border-color:var(--red);box-shadow:0 0 0 4px #f8717122}
+.mic{width:44px;height:44px;border-radius:13px;border:1px solid var(--line2);background:var(--panel2);color:var(--text2);font-size:18px;cursor:pointer;flex:none;display:grid;place-items:center}
+.mic:hover{color:var(--text);border-color:var(--brand)}
+.mic.on{background:var(--red);border-color:var(--red);color:#fff;animation:pulse 1.2s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 #f8717166}70%{box-shadow:0 0 0 12px #f8717100}100%{box-shadow:0 0 0 0 #f8717100}}
+.rec-info{display:none;align-items:center;gap:8px;color:#fecaca;font-size:12.5px;padding:0 6px 8px}
+.rec-info.on{display:flex}.rec-info .dot{width:8px;height:8px;border-radius:50%;background:var(--red);animation:bl 1s infinite}
+.conv{display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:12px;cursor:pointer;border:1px solid transparent;margin-bottom:4px}
+.conv:hover{background:var(--panel);border-color:var(--line)}
+.conv.on{background:var(--panel2);border-color:#5b8cff55}
+.conv .ct{flex:1;min-width:0}.conv .ct b{display:block;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
+.conv .ct small{color:var(--muted);font-size:11px}
+.conv .del{opacity:0;background:none;border:0;color:var(--muted);cursor:pointer;font-size:14px;padding:2px 6px;border-radius:6px}
+.conv:hover .del{opacity:1}.conv .del:hover{color:var(--red);background:#f871711a}
+.newc{width:100%;margin-bottom:10px;padding:10px;border-radius:12px;border:1px dashed var(--line2);background:none;color:var(--text2);cursor:pointer;font-size:13px}
+.newc:hover{border-color:var(--brand);color:var(--text)}
+.estate{font-size:11px;padding:1px 8px;border-radius:99px;margin-right:6px}
+.estate.missing{background:#ffffff10;color:var(--muted)}.estate.dotenv,.estate.given{background:#34d3991a;color:#a7f3d0}
+.estate.on_liara{background:#5b8cff1a;color:#c7d6ff}.estate.empty,.estate.suspicious{background:#fbbf241a;color:#fde68a}
+.estate.ok{background:#34d3991a;color:#a7f3d0}
+.cbox textarea{flex:1;resize:none;background:none;border:0;color:var(--text);font-family:inherit;font-size:14.5px;padding:8px 10px;max-height:160px;line-height:1.8}
+.cbox textarea:focus{outline:none}
 .send{width:44px;height:44px;border-radius:13px;border:0;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;font-size:18px;cursor:pointer;flex:none}
 .send:disabled{opacity:.45;cursor:default}
 .hint{color:var(--muted);font-size:11.5px;text-align:center;margin-top:8px}
@@ -187,7 +207,8 @@ header .sub{color:var(--muted);font-size:12px;margin-right:10px;font-weight:400}
   <div class="brand"><div class="logo">ل</div><div><h1>لیارا کوپایلوت</h1><p>همکار فنی شما برای انتشار، پایش و نگهداری</p></div></div>
   <div class="pills" id="pills"></div>
   <div class="tabs">
-    <button class="tab on" data-t="apps">اپ‌ها <span class="n" id="nApps">۰</span></button>
+    <button class="tab on" data-t="convs">گفت‌وگوها</button>
+    <button class="tab" data-t="apps">اپ‌ها <span class="n" id="nApps">۰</span></button>
     <button class="tab" data-t="vms">سرورها <span class="n" id="nVms">۰</span></button>
     <button class="tab" data-t="audit">گزارش</button>
   </div>
@@ -202,7 +223,7 @@ header .sub{color:var(--muted);font-size:12px;margin-right:10px;font-weight:400}
 <main>
   <header>
     <h2>گفت‌وگو<span class="sub" id="hsub">—</span></h2>
-    <div style="display:flex;gap:8px"><button class="hbtn" onclick="loadDash(true)">↻ بروزرسانی</button><button class="hbtn" onclick="location.reload()">گفت‌وگوی جدید</button></div>
+    <div style="display:flex;gap:8px"><button class="hbtn" onclick="loadDash(true)">↻ بروزرسانی</button><button class="hbtn" onclick="newConversation()">＋ گفت‌وگوی جدید</button></div>
   </header>
   <div id="chat"><div class="wrap" id="thread">
     <div class="hero" id="hero">
@@ -219,12 +240,13 @@ header .sub{color:var(--muted);font-size:12px;margin-right:10px;font-weight:400}
   </div></div>
   <div class="compose"><div class="wrap">
     <div class="chips" id="chips"></div>
-    <div class="box"><textarea id="inp" rows="1" placeholder="درخواستتان را بنویسید… مثلاً «سایت tmn-portal خطای ۵۰۳ می‌دهد»"></textarea><button class="send" id="send" title="ارسال">➤</button></div>
-    <div class="hint">Enter برای ارسال · Shift+Enter خط جدید · هیچ عملیات حساسی بدون تأیید شما اجرا نمی‌شود</div>
+    <div class="rec-info" id="recInfo"><span class="dot"></span><span id="recTxt">در حال ضبط… دوباره روی میکروفون بزنید تا تمام شود</span></div>
+    <div class="cbox" id="cbox"><button class="mic" id="mic" title="پیام صوتی">🎤</button><textarea id="inp" rows="1" placeholder="درخواستتان را بنویسید یا روی 🎤 بزنید و بگویید…"></textarea><button class="send" id="send" title="ارسال">➤</button></div>
+    <div class="hint">Enter برای ارسال · Shift+Enter خط جدید · 🎤 پیام صوتی · هیچ عملیات حساسی بدون تأیید شما اجرا نمی‌شود</div>
   </div></div>
 </main>
 <script>
-let SID=null,INFO={},DASH={apps:[],vms:[]},TAB='apps',curTL=null,typingEl=null;
+let SID=null,INFO={},DASH={apps:[],vms:[]},TAB='convs',curTL=null,typingEl=null,ES=null,REPLAY=false,PENDING=new Set(),CONVS=[];
 const $=s=>document.querySelector(s),thread=$('#thread'),chat=$('#chat');
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const fa=n=>n==null||n===''?'—':String(n).replace(/\d/g,d=>'۰۱۲۳۴۵۶۷۸۹'[d]);
@@ -252,11 +274,11 @@ async function init(){
   $('#pills').innerHTML=(INFO.mock?'<span class="pill warn"><span class="d"></span>حالت شبیه‌سازی</span>':'<span class="pill ok"><span class="d"></span>متصل به API لیارا</span>')+
     `<span class="pill"><span class="d" style="background:${INFO.llm?'var(--brand)':'var(--muted)'}"></span>${INFO.llm?'مدل: '+esc(INFO.model):'موتور قواعد داخلی'}</span>`;
   $('#hsub').textContent=INFO.mock?'شبیه‌ساز':'لیارا';
-  SID=(await (await fetch('/api/session',{method:'POST'})).json()).sid;
-  const es=new EventSource('/api/events/'+SID);es.onmessage=e=>onEvent(JSON.parse(e.data));
+  const last=(location.hash.match(/c=([a-f0-9]+)/)||[])[1];
+  await openConversation(last||null);
   const chips=['وضعیت همه‌ی اپ‌ها','لیست سرورهای مجازی','پلن‌های لیارا','پلن‌های سرور مجازی','پروژه‌ی ./victim-app را دیپلوی کن'];
   $('#chips').innerHTML=chips.map(c=>`<button class="qchip">${esc(c)}</button>`).join('');
-  document.querySelectorAll('.qchip,.act').forEach(b=>b.onclick=()=>ask(b.dataset.q||b.textContent));
+  document.querySelectorAll('.qchip').forEach(b=>b.onclick=()=>ask(b.textContent));setupMic();
   document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{TAB=b.dataset.t;document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x===b));renderSide()});
   if(INFO.mock){const f=$('#faults');f.style.display='flex';
     f.innerHTML='<span style="width:100%;color:var(--muted)">تزریق خطا برای تمرین (shop-demo):</span>'+
@@ -264,6 +286,30 @@ async function init(){
     .map(([k,l])=>`<button onclick="fault('${k}')">${l}</button>`).join('')}
   loadDash();setInterval(loadDash,25000);
 }
+const HERO_HTML=document.getElementById('hero').outerHTML;
+function resetThread(){thread.innerHTML=HERO_HTML;curTL=null;typingEl=null;
+  document.querySelectorAll('#hero .act').forEach(b=>b.onclick=()=>ask(b.dataset.q))}
+async function openConversation(id){
+  if(ES){ES.close();ES=null}
+  const r=await fetch('/api/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({resume:id})});
+  const d=r.ok?await r.json():await (await fetch('/api/session',{method:'POST'})).json();
+  SID=d.sid;PENDING=new Set(d.pending||[]);resetThread();
+  $('#hsub').textContent=d.title||'گفت‌وگوی جدید';
+  if(d.events&&d.events.length){REPLAY=true;const done=new Set(d.events.filter(e=>e.type==='approval_result').map(e=>e.id));
+    for(const ev of d.events){onEvent(ev);if(ev.type==='approval'&&!done.has(ev.id)&&!PENDING.has(ev.id))expireApproval(ev.id)}
+    REPLAY=false;closeSpins();scroll()}
+  history.replaceState(null,'',d.events&&d.events.length?'#c='+SID:'#');
+  ES=new EventSource('/api/events/'+SID);ES.onmessage=e=>onEvent(JSON.parse(e.data));
+  showTyping(!!d.busy);$('#send').disabled=!!d.busy;loadConvs();
+}
+function expireApproval(id){const c=document.getElementById('ap-'+id);if(!c)return;c.querySelector('.btns')?.remove();c.querySelector('.inputs')?.remove();
+  c.querySelector('.bd').appendChild(el('resolved','<span style="color:var(--muted)">⏱</span> این درخواست منقضی شد (برنامه دوباره اجرا شده)؛ اگر لازم است دوباره بخواهید.'));c.style.opacity=.6}
+function newConversation(){location.hash='';openConversation(null)}
+async function loadConvs(){try{CONVS=await (await fetch('/api/conversations')).json()}catch(e){CONVS=[]}if(TAB==='convs')renderSide()}
+async function delConv(id,e){e.stopPropagation();if(!confirm('این گفت‌وگو حذف شود؟'))return;
+  await fetch('/api/conversations/'+id,{method:'DELETE'});if(id===SID)newConversation();else loadConvs()}
+function ago(t){if(!t)return'';const s=Date.now()/1000-t;if(s<60)return'همین حالا';if(s<3600)return fa(Math.floor(s/60))+' دقیقه پیش';
+  if(s<86400)return fa(Math.floor(s/3600))+' ساعت پیش';return fa(Math.floor(s/86400))+' روز پیش'}
 async function fault(k){await fetch('/api/mock/fault',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({app:'shop-demo',fault:k||null})});loadDash()}
 async function loadDash(){try{DASH=await (await fetch('/api/dashboard')).json()}catch(e){}renderSide()}
 function meter(v,l){if(v==null)return'';const c=v>85?'var(--red)':v>65?'var(--yellow)':'var(--green)';
@@ -271,6 +317,13 @@ function meter(v,l){if(v==null)return'';const c=v>85?'var(--red)':v>65?'var(--ye
 async function renderSide(){
   $('#nApps').textContent=fa((DASH.apps||[]).length);$('#nVms').textContent=fa((DASH.vms||[]).length);
   const side=$('#side');
+  if(TAB==='convs'){
+    side.innerHTML='<button class="newc" onclick="newConversation()">＋ گفت‌وگوی جدید</button>'+(CONVS.map(c=>`<div class="conv ${c.id===SID?'on':''}" onclick="openConversation('${c.id}')">
+      <span>💬</span><div class="ct"><b>${esc(c.title||'بدون عنوان')}</b><small>${ago(c.updated)} · ${fa(c.messages)} پیام</small></div>
+      <button class="del" title="حذف" onclick="delConv('${c.id}',event)">🗑</button></div>`).join('')
+      ||'<div class="empty-s">هنوز گفت‌وگویی ذخیره نشده.<br>هر گفت‌وگو خودکار اینجا ذخیره می‌شود.</div>');
+    return;
+  }
   if(TAB==='apps'){
     if(DASH.error){side.innerHTML=`<div class="empty-s">⚠️ ${esc(DASH.error)}</div>`;return}
     side.innerHTML=(DASH.apps||[]).map(a=>{const ok=a.http>=200&&a.http<400,slow=a.latency_ms>1500;
@@ -292,7 +345,7 @@ async function renderSide(){
 function ask(t){$('#inp').value=t;send()}
 async function send(){
   const t=$('#inp').value.trim();if(!t||$('#send').disabled)return;$('#inp').value='';autosize();
-  add(el('row user',`<div class="av">شما</div><div class="bubble">${esc(t)}</div>`));curTL=null;
+  curTL=null;
   await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sid:SID,text:t})});
 }
 function autosize(){const i=$('#inp');i.style.height='auto';i.style.height=Math.min(i.scrollHeight,160)+'px'}
@@ -313,8 +366,11 @@ const RISK={high:['high','حساس'],low:['low','کم‌ریسک'],critical:['cr
 
 function onEvent(ev){
   switch(ev.type){
-  case 'busy': $('#send').disabled=ev.value;showTyping(ev.value);if(!ev.value){closeSpins();loadDash()} break;
-  case 'thinking': showTyping(true);break;
+  case 'busy': if(REPLAY)break;$('#send').disabled=ev.value;showTyping(ev.value);if(!ev.value){closeSpins();loadDash();loadConvs()} break;
+  case 'thinking': if(!REPLAY)showTyping(true);break;
+  case 'user': curTL=null;add(el('row user',`<div class="av">شما</div><div class="bubble">${esc(ev.text)}</div>`));
+    if(!REPLAY&&$('#hsub').textContent==='گفت‌وگوی جدید'){$('#hsub').textContent=ev.text.slice(0,60);history.replaceState(null,'','#c='+SID);setTimeout(loadConvs,400)}break;
+  case 'envs': curTL=null;renderEnvs(ev.data);break;
   case 'message': closeSpins();curTL=null;add(el('row assistant',`<div class="av">ل</div><div class="bubble">${md(ev.text)}</div>`));break;
   case 'tool':{const t=ev.status==='running'?tl():null;
     if(ev.status==='running'){const r=RISK[ev.risk];const s=el('step',`<span class="ic"><span class="spin"></span></span><span>${esc(TOOLFA[ev.name]||ev.name)}${r?` <span class="risk chip ${r[0]}">${r[1]}</span>`:''}</span>`);s.dataset.tool=ev.name;t.appendChild(s)}
@@ -343,7 +399,10 @@ function renderApproval(a){
   const crit=a.risk==='critical',r=RISK[a.risk]||['low',''];
   const impact=String(a.impact||''),nl=impact.indexOf('\n');
   const impactText=nl>0?impact.slice(0,nl):impact,cmds=nl>0?impact.slice(nl+1):'';
-  const inputs=(a.inputs||[]).map(i=>`<div><label><code>${esc(i.key)}</code> ${i.required?'<span style="color:var(--yellow)">· لازم</span>':'<span style="color:var(--green)">· آماده</span>'}</label><input data-k="${esc(i.key)}" ${i.required?'data-req=1':''} placeholder="${i.required?'مقدار را وارد کنید':'(بدون تغییر)'}" autocomplete="off" spellcheck="false">${i.hint?`<div style="font-size:11.5px;color:var(--muted);margin-top:5px">${md(i.hint)}</div>`:''}</div>`).join('');
+  const ST={missing:'خالی · اختیاری',dotenv:'از فایل .env',given:'مقدار داده‌شده',on_liara:'روی لیارا تنظیم است'};
+  const PH={missing:'مقدار (اختیاری — می‌توانید بعداً هم بدهید)',dotenv:'خالی = همان مقدار .env',given:'خالی = همان مقدار',on_liara:'خالی = بدون تغییر'};
+  const inputs=(a.inputs||[]).map(i=>{const st=i.state||(i.required?'missing':'given');return `<div><label><code>${esc(i.key)}</code><span class="estate ${st}">${ST[st]||''}</span>${i.required?' <span style="color:var(--yellow)">· لازم</span>':''}</label><input data-k="${esc(i.key)}" ${i.required?'data-req=1':''} placeholder="${esc(PH[st]||'')}" autocomplete="off" spellcheck="false">${i.hint?`<div style="font-size:11.5px;color:var(--muted);margin-top:5px">${md(i.hint)}</div>`:''}</div>`}).join('');
+  const envNote=(a.inputs||[]).length&&!(a.inputs||[]).some(i=>i.required)?'<div class="meta" style="margin-top:10px">💡 همه‌ی متغیرها اختیاری‌اند؛ هر وقت خواستید بگویید «متغیر X را روی اپ بگذار» یا «متغیرهای اپ را بررسی کن».</div>':'';
   const c=add(el('card approval'+(crit?' critical':''),`
    <div class="hd"><span class="tt">🛡 نیاز به تأیید شما</span><span class="chip ${r[0]}">${esc(a.risk_label||r[1])}</span></div>
    <div class="bd"><div class="ap-grid">
@@ -352,9 +411,9 @@ function renderApproval(a){
      ${cmds?`<pre class="cmds">${esc(cmds)}</pre>`:''}
      <span>↩</span><span class="k">راه برگشت</span><span class="v">${md(a.rollback)}</span>
    </div>
-   ${inputs?'<div class="inputs">'+inputs+'</div>':''}
+   ${inputs?'<div class="inputs">'+inputs+'</div>'+envNote:''}
    <div class="btns"><button class="btn ${crit?'danger':'ok'}">${crit?'بله، مطمئنم':'تأیید و اجرا'}</button><button class="btn no">انصراف</button></div></div>`));
-  c.id='ap-'+a.id;c.querySelector('input')?.focus();
+  c.id='ap-'+a.id;if(!REPLAY)c.querySelector('input')?.focus();
   const post=(ok,values)=>fetch('/api/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sid:SID,id:a.id,approved:ok,values})});
   c.querySelector('.btn.ok,.btn.danger').onclick=()=>{const values={};let miss=false;
     c.querySelectorAll('input[data-k]').forEach(i=>{values[i.dataset.k]=i.value.trim();if(i.dataset.req&&!i.value.trim()){miss=true;i.style.borderColor='var(--red)'}});
@@ -378,6 +437,12 @@ function renderDiagnosis(r){
   const lim=(s.limitations||[]).length?`<div class="meta">ℹ️ ${s.limitations.map(esc).join(' · ')}</div>`:'';
   add(el('card',`<div class="hd"><span class="tt">🩺 گزارش عیب‌یابی</span><span class="chip ${L[2]}">${L[0]} ${L[1]}</span></div><div class="bd"><div class="stats">${stats}</div>${hyps||'<div class="empty-s" style="padding:10px">علتی پیدا نشد؛ سرویس سالم پاسخ می‌دهد.</div>'}${lim}</div>`));
 }
+function renderEnvs(d){if(!d||d.error)return;
+  const L={missing:'در کد هست، روی لیارا نیست',empty:'خالی',suspicious:'مقدار نمونه/مشکوک',ok:'تنظیم شده'};
+  const rows=(d.rows||[]).map(r=>`<tr><td><code>${esc(r.key)}</code></td><td><span class="estate ${r.status}">${L[r.status]||r.status}</span></td><td class="mono" style="font-size:11.5px">${esc(r.used_at||'')}</td></tr>`);
+  const bad=(d.missing||[]).length+(d.empty||[]).length+(d.suspicious||[]).length;
+  table(`🔑 متغیرهای محیطی ${esc(d.app||'')}`,['متغیر','وضعیت','محل استفاده در کد'],rows.length?rows:['<tr><td colspan=3>متغیری تعریف نشده</td></tr>'],
+    `<span class="chip ${bad?'low':'okc'}">${bad?fa(bad)+' مورد نیاز به توجه':'همه سالم'}</span>`)}
 function renderVerify(v){const ok=v.fixed;
   add(el('card',`<div class="hd"><span class="tt">${ok?'✅ راستی‌آزمایی: مشکل برطرف شد':'⚠️ راستی‌آزمایی: هنوز کامل حل نشده'}</span><span class="chip ${ok?'okc':'low'}">قبل / بعد</span></div><div class="bd">
    <div class="ba"><div class="box"><small>قبل از اصلاح</small><b>${(v.before.statuses||[]).map(fa).join('، ')}</b><small>${fa(v.before.median_ms)} ms</small></div><div class="arr">←</div>
@@ -400,6 +465,7 @@ function renderSecret(title,val){const c=add(el('card',`<div class="hd"><span cl
 function table(title,head,rows,extra=''){add(el('card',`<div class="hd"><span class="tt">${title}</span>${extra}</div><table class="tbl"><tr>${head.map(h=>'<th>'+h+'</th>').join('')}</tr>${rows.join('')}</table>`))}
 function renderResult(tool,d){
   if(!d||d.error||d.rejected)return;
+  if(tool==='check_envs'){renderEnvs(d);return}
   if(tool==='get_logs'){const ls=(d.lines||[]).map(l=>{const c=/error|fatal|exception|500|killed/i.test(l)?'e':/warn|slow|timeout/i.test(l)?'w':'';return `<span class="${c}">${esc(l)}</span>`}).join('\n');
     add(el('card',`<div class="hd"><span class="tt">📜 لاگ‌ها</span><span class="chip">${fa(d.count)} خط</span></div><div class="logs">${ls||'لاگی نیست'}</div>`));return}
   if(tool==='list_apps'&&Array.isArray(d)){table('📦 اپ‌ها',['اپ','پلتفرم','پلن','وضعیت'],d.map(a=>`<tr><td><a href="${a.url}" target="_blank">${esc(a.name)}</a></td><td>${esc(a.platform)}</td><td>${esc(a.plan)}</td><td>${esc(a.status)}</td></tr>`));return}
@@ -410,6 +476,34 @@ function renderResult(tool,d){
   if(tool==='health_check_all'&&Array.isArray(d)){table('🩺 سلامت سرویس‌ها',['اپ','وضعیت','زمان پاسخ','مهم‌ترین مشکل'],d.map(a=>`<tr><td>${esc(a.app)}</td><td>${{healthy:'🟢 سالم',degraded:'🟡 مختل',down:'🔴 خطا'}[a.status]||esc(a.status)}</td><td>${fa(a.latency_ms)} ms</td><td>${esc(a.top_issue||'—')}</td></tr>`));return}
   if(tool==='domain_dns_guide'&&d.option_B){table('🌐 رکوردهای DNS',['نوع','نام','مقدار'],d.option_B.records.map(r=>`<tr><td>${esc(r.type)}</td><td><code>${esc(r.name)}</code></td><td><code>${esc(r.value)}</code></td></tr>`))}
 }
+// ------------------------------------------------------------------ voice input
+let REC=null,CHUNKS=[],SR=null,REC_T0=0,REC_TIMER=null;
+function setupMic(){$('#mic').onclick=()=>{if(REC||SR)stopMic();else startMic()}}
+function micUI(on,txt){$('#mic').classList.toggle('on',on);$('#cbox').classList.toggle('rec',on);$('#recInfo').classList.toggle('on',on||!!txt);
+  if(txt)$('#recTxt').textContent=txt;clearInterval(REC_TIMER);
+  if(on){REC_T0=Date.now();REC_TIMER=setInterval(()=>{if(REC)$('#recTxt').textContent='در حال ضبط… '+fa(Math.round((Date.now()-REC_T0)/1000))+' ثانیه — برای پایان دوباره روی 🎤 بزنید'},500)}}
+function toast(t){micUI(false,t);setTimeout(()=>{if(!REC&&!SR)$('#recInfo').classList.remove('on')},4500)}
+async function startMic(){
+  if(INFO.stt&&navigator.mediaDevices&&window.MediaRecorder){
+    try{const stream=await navigator.mediaDevices.getUserMedia({audio:true});CHUNKS=[];
+      REC=new MediaRecorder(stream);REC.ondataavailable=e=>e.data.size&&CHUNKS.push(e.data);
+      REC.onstop=async()=>{stream.getTracks().forEach(t=>t.stop());const blob=new Blob(CHUNKS,{type:REC.mimeType||'audio/webm'});REC=null;
+        micUI(false,'در حال تبدیل صدا به متن…');const f=new FormData();f.append('file',blob,'voice.webm');
+        try{const r=await fetch('/api/transcribe',{method:'POST',body:f});const d=await r.json();
+          if(!r.ok)throw new Error(d.detail||'خطا');putText(d.text)}catch(e){toast('⚠️ '+e.message)}};
+      REC.start();micUI(true);return}catch(e){toast('⚠️ دسترسی به میکروفون داده نشد');return}}
+  const S=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!S){toast('⚠️ مرورگر شما تشخیص گفتار ندارد؛ از Chrome استفاده کنید یا STT_API_KEY را در .env تنظیم کنید.');return}
+  SR=new S();SR.lang='fa-IR';SR.interimResults=true;SR.continuous=true;const base=$('#inp').value;let finalTxt='';
+  SR.onresult=e=>{let interim='';for(let i=e.resultIndex;i<e.results.length;i++){const t=e.results[i][0].transcript;if(e.results[i].isFinal)finalTxt+=t+' ';else interim+=t}
+    $('#inp').value=(base?base+' ':'')+finalTxt+interim;autosize()};
+  SR.onerror=e=>{const m={'not-allowed':'دسترسی به میکروفون داده نشد','network':'سرویس تشخیص گفتار مرورگر در دسترس نیست (اینترنت/فیلتر). STT_API_KEY را در .env تنظیم کنید.','no-speech':'صدایی شنیده نشد'};
+    SR=null;toast('⚠️ '+(m[e.error]||e.error))};
+  SR.onend=()=>{if(SR){SR=null;micUI(false);if($('#inp').value.trim())toast('✓ متن آماده است؛ بررسی کنید و ارسال بزنید')}};
+  SR.start();micUI(true,'در حال گوش دادن… صحبت کنید؛ برای پایان دوباره روی 🎤 بزنید');REC_T0=Date.now()}
+function stopMic(){if(REC){REC.stop()}if(SR){const s=SR;SR=null;s.stop();micUI(false);if($('#inp').value.trim())toast('✓ متن آماده است؛ بررسی کنید و ارسال بزنید')}}
+function putText(t){t=(t||'').trim();if(!t){toast('صدایی تشخیص داده نشد');return}const i=$('#inp');i.value=(i.value?i.value+' ':'')+t;autosize();i.focus();
+  toast('✓ متن آماده است؛ بررسی کنید و ارسال بزنید')}
 init();
 </script>
 </body>

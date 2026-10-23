@@ -7,6 +7,8 @@ Two brains share the same tools and the same safety policy:
 from __future__ import annotations
 
 import asyncio
+import os
+import time
 import json
 import re
 import uuid
@@ -28,7 +30,11 @@ SYSTEM_PROMPT = """تو «لیارا کوپایلوت» هستی؛ همکار ف
 5. اگر ابزاری limitation برگرداند، محدودیت API لیارا را شفاف به کاربر اعلام کن و کاری که خودش باید انجام دهد را قدم‌به‌قدم بگو (مثل شارژ حساب، تنظیم DNS در ایرنیک، تغییر پلن از پنل).
 6. اگر کاربر عملیاتی را رد کرد، احترام بگذار و گزینه‌ی جایگزین بده.
 7. هیچ‌وقت مقدار متغیرهای محیطی یا توکن را در پاسخ تکرار نکن. برای deploy مقدار env نساز و حدس نزن: سیستم خودش
-   متغیرهای لازم را از کد و فایل ‎.env‎ پروژه پیدا می‌کند و در کارت تأیید از کاربر می‌پرسد. فقط مقدارهایی که خود کاربر گفته را در envs بفرست.
+   متغیرهای لازم را از کد و فایل ‎.env‎ پروژه پیدا می‌کند و در کارت تأیید (همه اختیاری) از کاربر می‌پرسد. فقط مقدارهایی که خود کاربر گفته را در envs بفرست.
+   اگر بعد از دیپلوی متغیری خالی ماند (unset_env_vars)، به کاربر بگو و پیشنهاد بده هر وقت خواست مقدارش را بدهد؛ با set_env تنظیم کن.
+   برای بررسی متغیرها (خالی، جاافتاده، مقدار نمونه/مشکوک) از check_envs استفاده کن.
+   دستور اجرا و پورت را تحلیلگر پروژه خودش تعیین می‌کند (مثلاً uvicorn روی 0.0.0.0)؛ start_command را فقط وقتی بده که عیب‌یابی نشان داده دستور اشتباه است.
+   اگر دیپلوی UNHEALTHY شد، auto_diagnosis را بخوان و علت اصلی را با شاهد توضیح بده؛ rollback را فقط وقتی پیشنهاد بده که نسخه‌ی سالم قبلی وجود دارد.
 8. اگر نام اپ مشخص نیست و چند اپ وجود دارد، با list_apps پیدا کن یا کوتاه بپرس.
 9. دو نوع سرویس داری: «اپ» (PaaS؛ برای سایت و برنامه، زیرساخت با لیارا) و «سرور مجازی» (IaaS؛ لینوکس کامل با دسترسی root).
    برای سایت/API معمولاً اپ بهتر است؛ اگر کاربر سرور، VPS، ربات دائمی، VPN، یا کنترل کامل سیستم‌عامل خواست، سرور مجازی پیشنهاد بده.
@@ -41,7 +47,7 @@ SYSTEM_PROMPT = """تو «لیارا کوپایلوت» هستی؛ همکار ف
 قالب پاسخ: چند خط کوتاه، در صورت نیاز فهرست. از جدول‌های بزرگ پرهیز کن؛ رابط کاربری کارت‌های تشخیص را خودش نمایش می‌دهد."""
 
 
-AUTO_RESULT = {"list_apps", "list_plans", "list_vms", "get_logs", "vm_options", "domain_dns_guide", "health_check_all"}
+AUTO_RESULT = {"check_envs", "list_apps", "list_plans", "list_vms", "get_logs", "vm_options", "domain_dns_guide", "health_check_all"}
 
 
 def _mask(args: dict) -> dict:
@@ -56,6 +62,21 @@ def _mask(args: dict) -> dict:
     return out
 
 
+CONV_DIR = os.path.join(config.DATA_DIR, "conversations")
+SKIP_LOG = {"thinking", "busy"}
+
+
+def _sanitize(ev: dict) -> dict:
+    """What gets written to the conversation history on disk: never secrets."""
+    ev = dict(ev)
+    if ev.get("type") == "vm" and ev.get("root_password"):
+        ev["root_password"] = None
+        ev["password_hidden"] = True
+    if ev.get("type") == "secret":
+        ev["value"] = "•••••••• (برای امنیت در تاریخچه ذخیره نمی‌شود)"
+    return ev
+
+
 class Session:
     def __init__(self, client, sid: str | None = None):
         self.id = sid or uuid.uuid4().hex[:12]
@@ -65,10 +86,69 @@ class Session:
         self.state: dict = {}
         self.history: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
         self.busy = False
+        self.log: list[dict] = []
+        self.title = ""
+        self.created = time.time()
+        self.updated = self.created
         self.brain = LLMBrain(self) if config.LLM_API_KEY else RuleBrain(self)
+        if sid:
+            self._load()
+
+    # ------------------------------------------------------------ persistence
+    @property
+    def path(self) -> str:
+        return os.path.join(CONV_DIR, f"{self.id}.json")
+
+    def _load(self):
+        try:
+            with open(self.path, encoding="utf-8") as f:
+                d = json.load(f)
+        except (OSError, ValueError):
+            return
+        self.log, self.title = d.get("events", []), d.get("title", "")
+        self.created, self.updated = d.get("created", self.created), d.get("updated", self.updated)
+        hist = d.get("history") or []
+        hist = [h for h in hist if h.get("role") != "system"]
+        # drop an unfinished tool-call turn (e.g. server stopped while waiting for approval)
+        clean, i = [], 0
+        while i < len(hist):
+            h = hist[i]
+            if h.get("role") == "assistant" and h.get("tool_calls"):
+                ids = {c["id"] for c in h["tool_calls"]}
+                j, got = i + 1, set()
+                while j < len(hist) and hist[j].get("role") == "tool":
+                    got.add(hist[j].get("tool_call_id"))
+                    j += 1
+                if not ids <= got:
+                    break
+                clean += hist[i:j]
+                i = j
+                continue
+            clean.append(h)
+            i += 1
+        self.history = [{"role": "system", "content": SYSTEM_PROMPT}] + clean
+        self.state.update(d.get("state") or {})
+
+    def save(self):
+        if not self.log:
+            return
+        os.makedirs(CONV_DIR, exist_ok=True)
+        keep_state = {k: v for k, v in self.state.items() if k in ("app_sources", "current_app")}
+        data = {"id": self.id, "title": self.title or "گفت‌وگوی بدون عنوان", "created": self.created,
+                "updated": self.updated, "events": self.log[-1500:],
+                "history": [h for h in self.history if h.get("role") != "system"][-80:], "state": keep_state}
+        tmp = self.path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, default=str)
+        os.replace(tmp, self.path)
 
     # ------------------------------------------------------------ plumbing
     async def emit(self, ev: dict):
+        if ev.get("type") not in SKIP_LOG:
+            self.log.append(_sanitize(ev))
+            self.updated = time.time()
+            if ev.get("type") in ("approval", "approval_result"):
+                self.save()
         await self.queue.put(ev)
 
     async def say(self, text: str):
@@ -106,7 +186,8 @@ class Session:
                     target = key
                     inputs = [{"key": k,
                                "required": meta.get(k, {}).get("required", str(v).startswith("<") or v in ("", None)),
-                               "hint": meta.get(k, {}).get("hint", "مقدار را وارد کنید" if str(v).startswith("<") else "")}
+                               "hint": meta.get(k, {}).get("hint", "مقدار را وارد کنید" if str(v).startswith("<") else ""),
+                               "state": meta.get(k, {}).get("state", "missing" if str(v).startswith("<") else "given")}
                               for k, v in args[key].items()]
             req = ApprovalRequest(uuid.uuid4().hex[:10], name, _mask(args), t.risk, title, impact, rollback,
                                   inputs=inputs, input_target=target)
@@ -124,8 +205,11 @@ class Session:
                 return {"rejected": True, "message": "کاربر این عملیات را تأیید نکرد."}
             if target and values:
                 args[target] = {**args.get(target, {}), **{k: v for k, v in values.items() if v != ""}}
-            if target and any(str(v).startswith("<") for v in args.get(target, {}).values()):
-                return {"error": "مقدار برخی متغیرها وارد نشد؛ عملیات انجام نشد."}
+            if target:
+                filled = {k: v for k, v in (args.get(target) or {}).items() if v not in ("", None) and not str(v).startswith("<")}
+                if target == "variables" and not filled:
+                    return {"error": "هیچ مقداری وارد نشد؛ تغییری اعمال نشد."}
+                args[target] = filled
         await self.emit({"type": "tool", "name": name, "status": "running", "risk": t.risk.value,
                          "args": _mask(args)})
         try:
@@ -152,6 +236,9 @@ class Session:
             await self.say("یک عملیات در حال انجام است؛ لطفاً چند لحظه صبر کنید.")
             return
         self.busy = True
+        if not self.title:
+            self.title = text.strip().replace("\n", " ")[:60]
+        await self.emit({"type": "user", "text": text})
         await self.emit({"type": "busy", "value": True})
         try:
             await self.brain.turn(text)
@@ -160,6 +247,10 @@ class Session:
         finally:
             self.busy = False
             await self.emit({"type": "busy", "value": False})
+            try:
+                self.save()
+            except OSError:
+                pass
 
 
 # ===================================================================== LLM
@@ -251,6 +342,10 @@ class RuleBrain:
         if _has(text, "همه", "all") and _has(text, "سلامت", "health", "وضعیت", "پایش"):
             return await self.health_all()
         app = await self._app_from(text)
+        if _has(text, "متغیر", "env", "محیطی"):
+            if not app:
+                return await s.say("متغیرهای کدام اپ؟ نام اپ را هم بنویسید.")
+            return await self.env_flow(app, text)
         if app and _has(text, "پلن", "plan", "منابع") and _has(text, "تغییر", "ارتقا", "بزرگ", "کوچک", "upgrade", "افزایش", "کاهش"):
             return await self.plan_flow(app, text)
         if _has(text, "کند", "خطا", "۵۰۰", "500", "502", "ارور", "error", "مشکل", "بالا نمیاد", "قطع", "خراب", "slow", "down"):
@@ -355,6 +450,34 @@ class RuleBrain:
             await s.say(f"هنوز کامل حل نشده (بعد: {a.get('statuses')} / {a.get('median_ms')}ms). علت بعدی را بررسی می‌کنم…")
         await s.say("برای ادامه، لاگ‌های کامل را ببینید یا جزئیات بیشتری از مشکل بدهید.")
 
+    async def env_flow(self, app, text):
+        s = self.s
+        pairs = dict(re.findall(r"\b([A-Z][A-Z0-9_]{1,})\s*[=:]\s*([^\s،,]+)", text))
+        if not pairs:
+            m = re.search(r"\b([A-Z][A-Z0-9_]{2,})\b\s+(?:را\s+)?(?:به|برابر|بذار|بگذار|ست کن|عوض کن)?\s*([^\s،,]{3,})?", text)
+            named = re.findall(r"\b([A-Z][A-Z0-9_]{2,})\b", text)
+            if named and _has(text, "بذار", "بگذار", "تنظیم", "عوض", "تغییر", "ست", "اضافه", "set"):
+                res = await s.execute("set_env", {"app": app, "variables": {k: f"<{k}>" for k in named}})
+                return await self._env_done(app, res)
+        if pairs:
+            res = await s.execute("set_env", {"app": app, "variables": pairs})
+            return await self._env_done(app, res)
+        res = await s.execute("check_envs", {"app": app})
+        bad = res.get("missing", []) + res.get("empty", []) + res.get("suspicious", [])
+        if not bad:
+            return await s.say(f"✅ همه‌ی متغیرهای محیطی «{app}» مقدار دارند." + (f" ({res['note']})" if res.get("note") else ""))
+        await s.say(f"⚠️ این متغیرها نیاز به توجه دارند: {', '.join(bad)}.\nبرای تنظیم بنویسید مثلاً: «متغیر {bad[0]}=مقدار را روی {app} بگذار» "
+                    "یا فقط نام متغیر را بگویید تا کارت ورود مقدار باز شود.")
+
+    async def _env_done(self, app, res):
+        s = self.s
+        if res.get("rejected"):
+            return await s.say("باشه، متغیری تغییر نکرد.")
+        if res.get("error"):
+            return await s.say(f"⚠️ {res['error']}")
+        await s.say("✅ متغیرها اعمال شد و اپ ری‌استارت می‌شود. وضعیت را بررسی می‌کنم…")
+        await self.status(app)
+
     async def plan_flow(self, app, text):
         s = self.s
         down = _has(text, "کوچک", "کاهش", "ارزان", "down")
@@ -453,7 +576,7 @@ class RuleBrain:
         if plan.get("alternative"):
             msg.append(f"   (اگر ترافیک زیاد دارید: {plan['alternative']['id']})")
         if envs:
-            msg.append(f"🔑 برنامه به این متغیرها نیاز دارد: {', '.join(envs)} — در کارت تأیید مقدارشان را وارد کنید.")
+            msg.append(f"🔑 برنامه به این متغیرها نیاز دارد: {', '.join(envs)} — در کارت تأیید می‌توانید مقدارشان را بدهید (همه اختیاری‌اند؛ بعداً هم می‌شود).")
         for w in an["warnings"]:
             msg.append(f"⚠️ {w}")
         await s.say("\n".join(msg))

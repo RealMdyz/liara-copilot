@@ -3,14 +3,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import re
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from . import config, diagnosis
-from .agent import Session
+from .agent import CONV_DIR, Session
 from .liara_client import LiaraClient
 from .mock_liara import MockLiara
 from .policy import read_audit
@@ -50,17 +52,75 @@ async def index():
     return FileResponse(WEB / "index.html")
 
 
+@app.post("/api/transcribe")
+async def transcribe(file: UploadFile = File(...)):
+    """Voice input: audio from the mic button -> text (OpenAI-compatible /audio/transcriptions)."""
+    if not config.STT_API_KEY:
+        raise HTTPException(501, "تبدیل گفتار به متن روی سرور تنظیم نشده (STT_API_KEY)")
+    from openai import AsyncOpenAI
+    data = await file.read()
+    if len(data) > 25_000_000:
+        raise HTTPException(413, "فایل صوتی خیلی بزرگ است")
+    cli = AsyncOpenAI(api_key=config.STT_API_KEY, base_url=config.STT_BASE_URL or None)
+    try:
+        r = await cli.audio.transcriptions.create(model=config.STT_MODEL, file=(file.filename or "voice.webm", data),
+                                                  language="fa")
+    except Exception as e:  # noqa
+        raise HTTPException(502, f"سرویس تبدیل گفتار خطا داد: {type(e).__name__}")
+    return {"text": getattr(r, "text", "") or ""}
+
+
 @app.get("/api/info")
 async def info():
     return {"mock": config.MOCK_MODE, "llm": bool(config.LLM_API_KEY), "model": config.LLM_MODEL if config.LLM_API_KEY else None,
-            "approval_mode": config.APPROVAL_MODE}
+            "approval_mode": config.APPROVAL_MODE, "stt": bool(config.STT_API_KEY)}
+
+
+class SessionIn(BaseModel):
+    resume: str | None = None
 
 
 @app.post("/api/session")
-async def new_session():
+async def new_session(body: SessionIn | None = None):
+    rid = (body.resume if body else None) or None
+    if rid:
+        if not re.fullmatch(r"[a-f0-9]{6,32}", rid):
+            raise HTTPException(400, "bad id")
+        s = SESSIONS.get(rid) or Session(CLIENT, sid=rid)
+        SESSIONS[s.id] = s
+        return {"sid": s.id, "title": s.title, "events": s.log, "pending": list(s.pending.keys()), "busy": s.busy}
     s = Session(CLIENT)
     SESSIONS[s.id] = s
-    return {"sid": s.id}
+    return {"sid": s.id, "events": [], "pending": []}
+
+
+@app.get("/api/conversations")
+async def conversations():
+    out = []
+    if os.path.isdir(CONV_DIR):
+        for fn in os.listdir(CONV_DIR):
+            if not fn.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(CONV_DIR, fn), encoding="utf-8") as f:
+                    d = json.load(f)
+                out.append({"id": d["id"], "title": d.get("title"), "updated": d.get("updated"),
+                            "messages": sum(1 for e in d.get("events", []) if e.get("type") in ("user", "message"))})
+            except (OSError, ValueError, KeyError):
+                continue
+    return sorted(out, key=lambda x: -(x["updated"] or 0))[:200]
+
+
+@app.delete("/api/conversations/{cid}")
+async def delete_conversation(cid: str):
+    if not re.fullmatch(r"[a-f0-9]{6,32}", cid):
+        raise HTTPException(400, "bad id")
+    SESSIONS.pop(cid, None)
+    try:
+        os.remove(os.path.join(CONV_DIR, f"{cid}.json"))
+    except OSError:
+        pass
+    return {"ok": True}
 
 
 @app.get("/api/events/{sid}")

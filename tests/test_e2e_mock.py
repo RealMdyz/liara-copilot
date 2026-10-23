@@ -9,6 +9,8 @@ from pathlib import Path
 os.environ["MOCK_MODE"] = "1"
 os.environ["LLM_API_KEY"] = ""
 os.environ["AUDIT_LOG_PATH"] = "/tmp/copilot-test-audit.jsonl"
+import tempfile as _tf  # noqa: E402
+os.environ["DATA_DIR"] = _tf.mkdtemp(prefix="copilot-data-")
 
 from copilot.agent import Session  # noqa: E402
 from copilot.mock_liara import MockLiara  # noqa: E402
@@ -199,7 +201,7 @@ def test_llm_deploy_without_envs_still_asks():
                     return
         await asyncio.gather(s.handle("پروژه رو دیپلوی کن"), drive())
         inputs = {i["key"]: i for i in seen["ap"]["inputs"]}
-        assert "DATABASE_URL" in inputs and inputs["DATABASE_URL"]["required"], seen["ap"]["inputs"]
+        assert "DATABASE_URL" in inputs and not inputs["DATABASE_URL"]["required"], seen["ap"]["inputs"]
         assert "src/db.js" in inputs["DATABASE_URL"]["hint"]
         envs = {e["key"]: e["value"] for e in c.apps["shop-new"]["envs"]}
         assert envs["DATABASE_URL"] == "postgres://real/db"   # user's value, not the .env.example sample
@@ -222,8 +224,93 @@ def test_deploy_prefills_from_project_dotenv_and_skips_existing():
         # deploying a project without .env onto an app that already has the variable -> not asked again
         evs2 = await run(Session(c), f"پروژه‌ی {VICTIM} را دیپلوی کن اسم shop-demo")
         ap2 = next(e for e in evs2 if e["type"] == "approval")
-        assert "DATABASE_URL" not in {i["key"] for i in ap2["inputs"]}
+        inp2 = {i["key"]: i for i in ap2["inputs"]}
+        assert "روی لیارا تنظیم شده" in inp2["DATABASE_URL"]["hint"] and not inp2["DATABASE_URL"]["required"]
+        assert {e["key"]: e["value"] for e in c.apps["shop-demo"]["envs"]}["DATABASE_URL"] == "postgres://db:5432/shop"
         assert any("آنلاین" in e.get("text", "") for e in evs2 if e["type"] == "message")
         # secret values never land in the audit log
         assert "from-dotenv" not in open(os.environ["AUDIT_LOG_PATH"]).read()
     asyncio.run(go())
+
+
+
+def test_envs_optional_then_set_later_and_checked():
+    async def go():
+        c = MockLiara()
+        s = Session(c)
+        evs = await run(s, f"پروژه‌ی {VICTIM} را دیپلوی کن اسم env-later")   # leaves DATABASE_URL empty
+        assert any("آنلاین" in e.get("text", "") for e in evs if e["type"] == "message")
+        assert any(e["type"] == "step" and "خالی ماندند" in e["text"] for e in evs)
+        evs = await run(s, "متغیرهای env-later را بررسی کن")
+        chk = next(e for e in evs if e["type"] == "result" and e["tool"] == "check_envs")["data"]
+        assert chk["missing"] == ["DATABASE_URL"]
+        evs = await run(s, "متغیر DATABASE_URL=postgres://later/db را روی env-later بگذار")
+        assert next(e for e in evs if e["type"] == "approval")["tool"] == "set_env"
+        assert {e["key"]: e["value"] for e in c.apps["env-later"]["envs"]}["DATABASE_URL"] == "postgres://later/db"
+        evs = await run(s, "متغیرهای env-later را بررسی کن")
+        assert next(e for e in evs if e["type"] == "result" and e["tool"] == "check_envs")["data"]["missing"] == []
+    asyncio.run(go())
+
+
+def test_python_runtime_and_failed_deploy_diagnosis(tmp_path):
+    """FastAPI app in app/main.py: must be started with uvicorn on 0.0.0.0, not `python3 main.py`."""
+    async def go():
+        proj = tmp_path / "fa"
+        (proj / "app").mkdir(parents=True)
+        (proj / "app" / "main.py").write_text("from fastapi import FastAPI\napp = FastAPI()\n")
+        (proj / "app" / "__init__.py").write_text("")
+        (proj / "requirements.txt").write_text("fastapi\n")
+        c = MockLiara()
+        s = Session(c)
+        evs = await run(s, f"پروژه‌ی {proj} را دیپلوی کن اسم fa-app")
+        ap = next(e for e in evs if e["type"] == "approval")
+        assert "uvicorn app.main:app --host 0.0.0.0 --port 8000" in ap["impact"]
+        body = c.apps["fa-app"]["last_release_body"]
+        assert body["args"] == ["uvicorn app.main:app --host 0.0.0.0 --port 8000"] and body["port"] == 8000
+    asyncio.run(go())
+
+
+def test_diagnosis_finds_entry_and_localhost_problems():
+    from copilot import diagnosis
+    base = {"app": "x", "details": {"port": 8000, "envs": []}, "metrics": {}, "limitations": [],
+            "probe": {"ok": False, "statuses": [502]}, "releases": [{"_id": "r2", "state": "UNHEALTHY"}],
+            "source": "/p", "runtime": {"args": ["uvicorn app.main:app --host 0.0.0.0 --port 8000"]}}
+    ev = {**base, "logs": [{"ts": 1, "line": "python3: can't open file '/usr/src/app/main.py': [Errno 2] No such file or directory"}]}
+    top = diagnosis.analyze(ev)["hypotheses"][0]
+    assert top["key"] == "entry" and top["fixes"][0]["args"]["start_command"].startswith("uvicorn")
+    ev = {**base, "logs": [{"ts": 1, "line": "INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)"}]}
+    top = diagnosis.analyze(ev)["hypotheses"][0]
+    assert top["key"] == "host_binding"
+    ev = {**base, "logs": [], "env_check": {"missing": ["OPENAI_API_KEY"], "empty": [], "suspicious": []}}
+    assert diagnosis.analyze(ev)["hypotheses"][0]["key"] == "env_unset"
+
+
+def test_conversation_history_persists_and_resumes():
+    async def go():
+        c = MockLiara()
+        s = Session(c)
+        await run(s, "وضعیت shop-demo")
+        sid = s.id
+        s2 = Session(c, sid=sid)                     # e.g. after a restart / switching conversations
+        assert s2.title.startswith("وضعیت shop-demo")
+        assert [e for e in s2.log if e["type"] == "user"][0]["text"] == "وضعیت shop-demo"
+        assert any(e["type"] == "message" for e in s2.log)
+    asyncio.run(go())
+
+
+def test_api_conversations_and_voice_endpoint():
+    from fastapi.testclient import TestClient
+    from copilot import server
+    cl = TestClient(server.app)
+    sid = cl.post("/api/session").json()["sid"]
+    s = server.SESSIONS[sid]
+    asyncio.run(run(s, "پلن‌های لیارا"))
+    lst = cl.get("/api/conversations").json()
+    assert any(x["id"] == sid and x["messages"] >= 2 for x in lst)
+    d = cl.post("/api/session", json={"resume": sid}).json()
+    assert d["sid"] == sid and any(e["type"] == "user" for e in d["events"])
+    # voice: without STT_API_KEY the server says so (the browser then uses its own speech recognition)
+    r = cl.post("/api/transcribe", files={"file": ("v.webm", b"123", "audio/webm")})
+    assert r.status_code == 501
+    assert cl.delete(f"/api/conversations/{sid}").json()["ok"]
+    assert not any(x["id"] == sid for x in cl.get("/api/conversations").json())
