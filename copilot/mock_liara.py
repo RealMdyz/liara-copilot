@@ -13,12 +13,21 @@ import uuid
 
 from .liara_client import LiaraError, Limitation
 
-PLANS = {
-    "micro":    {"available": True, "CPU": {"amount": 0.2}, "RAM": {"amount": 0.25}, "volume": 2,  "price": 150_000},
-    "small":    {"available": True, "CPU": {"amount": 0.5}, "RAM": {"amount": 0.5},  "volume": 5,  "price": 290_000},
-    "medium":   {"available": True, "CPU": {"amount": 1},   "RAM": {"amount": 1},    "volume": 10, "price": 590_000},
-    "standard": {"available": True, "CPU": {"amount": 2},   "RAM": {"amount": 2},    "volume": 20, "price": 1_150_000},
-    "pro":      {"available": True, "CPU": {"amount": 4},   "RAM": {"amount": 4},    "volume": 40, "price": 2_300_000},
+PLANS = {  # same shape as GET /v1/me -> plans.projects (price = Toman per hour)
+    "micro-g2":    {"available": True, "region": "iran", "CPU": {"amount": 0.25}, "RAM": {"amount": 0.25}, "volume": 3,  "price": 140},
+    "small-g2":    {"available": True, "region": "iran", "CPU": {"amount": 0.5},  "RAM": {"amount": 0.5},  "volume": 5,  "price": 280},
+    "medium-g2":   {"available": True, "region": "iran", "CPU": {"amount": 1},    "RAM": {"amount": 1},    "volume": 10, "price": 560},
+    "standard-g2": {"available": True, "region": "iran", "CPU": {"amount": 2},    "RAM": {"amount": 2},    "volume": 20, "price": 1100},
+    "pro-g2":      {"available": True, "region": "iran", "CPU": {"amount": 4},    "RAM": {"amount": 4},    "volume": 40, "price": 2200},
+    "small":       {"available": False, "region": "iran", "CPU": {"amount": 0.5}, "RAM": {"amount": 0.5}, "volume": 5, "price": 250},
+}
+BUNDLES = {pid: {"basic": {"available": True, "displayPrice": 0}, "standard": {"available": True, "displayPrice": 90_000}}
+           for pid in PLANS}
+VM_PLANS = {
+    "standard-base-g2": {"available": True, "CPU": {"amount": 1}, "RAM": {"amount": 1}, "volume": 25, "monthlyPrice": 390_000},
+    "standard-plus-g2": {"available": True, "CPU": {"amount": 2}, "RAM": {"amount": 2}, "volume": 40, "monthlyPrice": 690_000},
+    "pro-g2":           {"available": True, "CPU": {"amount": 2}, "RAM": {"amount": 4}, "volume": 60, "monthlyPrice": 1_190_000},
+    "pro-plus-g2":      {"available": True, "CPU": {"amount": 4}, "RAM": {"amount": 8}, "volume": 80, "monthlyPrice": 2_190_000},
 }
 
 
@@ -34,11 +43,12 @@ class MockLiara:
         self.domains: list[dict] = []
         self.sources: dict[str, str] = {}
         self.releases: dict[str, dict] = {}
+        self.vms: dict[str, dict] = {}
         self._seed()
 
     # ---------------------------------------------------------------- seed
     def _seed(self):
-        self._make_app("shop-demo", "node", "small", port=3000,
+        self._make_app("shop-demo", "node", "small-g2", port=3000,
                        envs={"NODE_ENV": "production", "DATABASE_URL": "postgres://db:5432/shop"})
 
     def _make_app(self, name, platform, plan, port=3000, envs=None):
@@ -78,10 +88,110 @@ class MockLiara:
 
     # --------------------------------------------------------------- account
     async def me(self):
-        return {"user": {"email": "demo@example.com", "balance": 2_500_000}, "plans": {"projects": PLANS}}
+        return {"user": {"email": "demo@example.com", "balance": 2_500_000},
+                "plans": {"projects": PLANS, "projectBundlePlans": BUNDLES}}
 
     async def list_plans(self):
         return PLANS
+
+    async def creatable_plans(self):
+        return {k: v for k, v in PLANS.items() if "g2" in k and v["available"]}
+
+    async def bundle_plans(self, plan_id):
+        return BUNDLES.get(plan_id, {})
+
+    async def change_plan(self, app, plan_id):
+        a = self._app(app)
+        if plan_id not in PLANS:
+            raise LiaraError(400, "invalid planID", "resize")
+        a["planID"] = plan_id
+        if a["fault"] in ("memory_leak", "memory_leak_recovering", "cpu"):
+            a["mem"], a["cpu"], a["fault"] = 0.4, 0.3, None
+        return {"message": "plan changed"}
+
+    async def events(self, app, minutes=180):
+        a = self._app(app)
+        if a["fault"] == "memory_leak":
+            return ["OOMKilled: container exceeded memory limit", "Container restarted (reason: OOMKilled)"]
+        return ["Deployment succeeded"]
+
+    # ------------------------------------------------------------------ IaaS
+    async def vm_plans(self):
+        return VM_PLANS
+
+    async def vm_os_list(self):
+        return {"ubuntu": ["24.04", "22.04"], "debian": ["12.9"]}
+
+    async def vm_list(self):
+        return [{k: v for k, v in vm.items() if not k.startswith("_t")} for vm in self.vms.values()]
+
+    async def vm_get(self, vm_id):
+        for vm in self.vms.values():
+            if vm["_id"] == vm_id:
+                if vm["state"] != "CREATED" and time.time() - vm["_t"] > 1.0:
+                    vm["state"], vm["power"] = "CREATED", "ON"
+                return {k: v for k, v in vm.items() if not k.startswith("_t")}
+        raise LiaraError(404, "VM not found", "vm")
+
+    async def vm_find(self, name_or_id):
+        for vm in self.vms.values():
+            if name_or_id in (vm["_id"], vm["name"]):
+                return await self.vm_get(vm["_id"])
+        raise LiaraError(404, f"سرور «{name_or_id}» پیدا نشد", "vm")
+
+    async def vm_create(self, name, os, plan, ssh_keys=None):
+        if name in self.vms:
+            raise LiaraError(409, "VM exists", "vm")
+        if plan not in VM_PLANS:
+            raise LiaraError(400, "invalid plan", "vm")
+        self.vms[name] = {"_id": uuid.uuid4().hex[:24], "name": name, "OS": os, "plan": plan, "state": "CREATING",
+                          "power": "OFF", "createdAt": _now(), "_t": time.time(),
+                          "IPs": [{"address": f"185.{random.randint(1,250)}.{random.randint(1,250)}.{random.randint(1,250)}", "version": "v4"}],
+                          "config": {"hostname": name, "rootPassword": uuid.uuid4().hex[:14], "SSHKeys": ssh_keys or []},
+                          "planDetails": VM_PLANS[plan]}
+        return {"taskID": uuid.uuid4().hex[:12]}
+
+    async def vm_power(self, vm_id, action):
+        vm = await self.vm_get(vm_id)
+        self.vms[vm["name"]]["power"] = "ON" if action in ("start", "reboot") else "OFF"
+        return {"taskID": uuid.uuid4().hex[:12]}
+
+    async def vm_resize(self, vm_id, plan):
+        vm = await self.vm_get(vm_id)
+        self.vms[vm["name"]].update(plan=plan, planDetails=VM_PLANS[plan])
+        return {"taskID": uuid.uuid4().hex[:12]}
+
+    async def vm_reset_password(self, vm_id):
+        vm = await self.vm_get(vm_id)
+        if vm["power"] != "OFF":
+            raise LiaraError(409, "VM is not powered off", "reset-password")
+        pw = uuid.uuid4().hex[:14]
+        self.vms[vm["name"]]["config"]["rootPassword"] = pw
+        return {"password": pw}
+
+    async def vm_operations(self, vm_id):
+        return [{"name": "create", "state": "SUCCESS", "createdAt": _now()}]
+
+    async def vm_delete(self, vm_id):
+        vm = await self.vm_get(vm_id)
+        del self.vms[vm["name"]]
+        return {}
+
+    async def mock_ssh(self, vm, cmds, ctx):
+        await ctx.step(f"اتصال SSH به ‎root@{vm['IPs'][0]['address']}‎ (شبیه‌سازی)")
+        results = []
+        for c in cmds:
+            if c.startswith("export "):
+                continue
+            await asyncio.sleep(0.05)
+            out = "ok"
+            if "docker --version" in c:
+                out = "Docker version 26.1.3, build 26.1.3"
+            elif "free -h" in c:
+                out = "Mem: 1.9Gi used 412Mi free 1.2Gi"
+            results.append({"cmd": c, "exit": 0, "tail": out})
+            await ctx.step(f"‎$ {c[:70]}‎", "done", detail=out)
+        return {"ok": True, "ip": vm["IPs"][0]["address"], "results": results}
 
     async def close(self):
         pass
@@ -97,14 +207,14 @@ class MockLiara:
     async def create_app(self, name, platform, plan_id, bundle_plan_id="standard", network=None):
         if name in self.apps:
             raise LiaraError(409, "Project already exists", "/v1/projects/")
-        if plan_id not in PLANS:
-            raise LiaraError(400, "Invalid planID", "/v1/projects/")
+        if plan_id not in PLANS or "g2" not in plan_id or not PLANS[plan_id]["available"]:
+            raise LiaraError(400, "Invalid planID: only g2 plans are available for new apps", "/v1/projects")
         self.apps[name] = {
             "name": name, "project_id": name, "_id": uuid.uuid4().hex[:24], "type": platform,
             "planID": plan_id, "port": 3000, "scale": 1, "status": "CREATED", "envs": [],
             "fault": None, "mem": 0.1, "cpu": 0.05, "createdAt": _now(), "release_ids": [],
         }
-        return {"message": "project created"}
+        return {"created": name, "planID": plan_id, "bundlePlanID": "standard", "network": "net1"}
 
     async def delete_app(self, app):
         self._app(app)

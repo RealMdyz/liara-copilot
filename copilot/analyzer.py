@@ -199,11 +199,9 @@ def _plan_ram(plan: dict) -> float | None:
 
 
 def _plan_price(plan: dict) -> float:
-    for key in ("price", "monthlyPrice", "hourlyPrice"):
-        v = plan.get(key)
-        if isinstance(v, (int, float)):
-            return float(v)
-    return 0.0
+    """Monthly price in Toman (app plans expose hourly `price`; liara-cli multiplies by 720)."""
+    from .liara_client import plan_price_month
+    return plan_price_month(plan)
 
 
 def recommend_plan(plans: dict, ram_needed: float) -> dict:
@@ -215,7 +213,7 @@ def recommend_plan(plans: dict, ram_needed: float) -> dict:
         r = _plan_ram(p)
         if r is None:
             continue
-        rows.append({"id": pid, "ram_gb": r, "cpu": (p.get("CPU") or {}).get("amount") if isinstance(p.get("CPU"), dict) else p.get("CPU"),
+        rows.append({"id": pid, "ram_gb": r, "disk_gb": p.get("volume"), "cpu": (p.get("CPU") or {}).get("amount") if isinstance(p.get("CPU"), dict) else p.get("CPU"),
                      "price": _plan_price(p)})
     rows.sort(key=lambda x: (x["ram_gb"], x["price"]))
     if not rows:

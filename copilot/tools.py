@@ -110,9 +110,15 @@ async def list_releases(ctx: Ctx, app: str):
     return [{"id": r.get("_id"), "state": r.get("state"), "tag": r.get("tag"), "at": r.get("createdAt")} for r in rel]
 
 
-@tool("list_plans", "پلن‌های قابل‌خرید لیارا با RAM/CPU/قیمت.")
+async def _paid_plans(ctx: Ctx) -> dict:
+    plans = await ctx.client.creatable_plans()
+    paid = {k: v for k, v in plans.items() if k != "free"}
+    return paid or plans
+
+
+@tool("list_plans", "پلن‌های اپ (PaaS) که الان در لیارا قابل‌ساخت هستند (نسل g2، منطقه‌ی ایران) با RAM/CPU/دیسک/قیمت ماهانه.")
 async def list_plans(ctx: Ctx):
-    plans = await ctx.client.list_plans()
+    plans = await _paid_plans(ctx)
     return analyzer.recommend_plan(plans, 0).get("all", plans)
 
 
@@ -121,7 +127,7 @@ async def list_plans(ctx: Ctx):
       {"source": {"type": "string", "description": "مسیر پوشه یا URL مخزن git"}}, required=("source",))
 async def analyze_project(ctx: Ctx, source: str):
     await ctx.step("خواندن پروژه و تشخیص نوع آن")
-    plans = await ctx.client.list_plans()
+    plans = await _paid_plans(ctx)
     res = await asyncio.to_thread(analyzer.analyze, source, plans)
     res["source"] = source
     ctx.state["analysis"] = res
@@ -219,18 +225,22 @@ async def audit_log(ctx: Ctx):
     return read_audit(30)
 
 
-@tool("change_plan_guide", "راهنمای تغییر پلن اپ (API عمومی لیارا این عملیات را پشتیبانی نمی‌کند).",
-      {"app": APP}, required=("app",))
-async def change_plan_guide(ctx: Ctx, app: str):
+@tool("suggest_plan", "بر اساس مصرف فعلی اپ، پلن مناسب‌تر (بزرگ‌تر یا کوچک‌تر) را پیشنهاد می‌دهد.",
+      {"app": APP, "direction": {"type": "string", "enum": ["up", "down"], "description": "up=بزرگ‌تر، down=کوچک‌تر"}},
+      required=("app",))
+async def suggest_plan(ctx: Ctx, app: str, direction: str = "up"):
     d = await ctx.client.get_app(app)
-    plans = await ctx.client.list_plans()
-    cur = plans.get(d.get("planID"), {})
+    plans = await _paid_plans(ctx)
+    cur = (await ctx.client.list_plans()).get(d.get("planID"), {})
     ram = analyzer._plan_ram(cur) or 0.5
-    rec = analyzer.recommend_plan(plans, ram * 2)
-    return {"limitation": "تغییر پلن اپ در API عمومی/CLI لیارا وجود ندارد و باید از پنل انجام شود.",
-            "current_plan": d.get("planID"), "suggested": rec.get("id"),
-            "steps": [f"console.liara.ir → اپ {app} → تنظیمات → تغییر پلن → «{rec.get('id')}»",
-                      "تغییر پلن باعث ری‌استارت کوتاه اپ می‌شود."]}
+    rows = analyzer.recommend_plan(plans, 0).get("all", [])
+    if direction == "down":
+        cand = [r for r in rows if r["ram_gb"] < ram]
+        rec = cand[-1] if cand else None
+    else:
+        rec = next((r for r in rows if r["ram_gb"] > ram), None)
+    return {"current_plan": d.get("planID"), "current_ram_gb": ram, "suggested": rec,
+            "how": "با ابزار change_plan (با تأیید کاربر) اعمال می‌شود."}
 
 
 # ===================================================== WRITE (policy-guarded)
@@ -241,6 +251,10 @@ async def change_plan_guide(ctx: Ctx, app: str):
                           "از اعتبار حساب لیارا به‌صورت ساعتی هزینه کم می‌شود.",
                           "با حذف اپ، هزینه متوقف می‌شود."))
 async def create_app(ctx: Ctx, name: str, platform: str, plan_id: str):
+    plans = await _paid_plans(ctx)
+    if plan_id not in plans:
+        return {"error": f"پلن {plan_id} برای ساخت اپ جدید مجاز نیست (فقط پلن‌های نسل g2). پلن‌های مجاز: "
+                         f"{', '.join(list(plans)[:12])}"}
     return await ctx.client.create_app(name, platform, plan_id)
 
 
@@ -264,14 +278,16 @@ async def deploy(ctx: Ctx, source: str, app: str, create: bool = False, plan_id:
                  platform: str | None = None, port: int | None = None, envs: dict | None = None):
     an = ctx.state.get("analysis")
     if not an or an.get("source") != source:
-        an = await asyncio.to_thread(analyzer.analyze, source, await ctx.client.list_plans())
+        an = await asyncio.to_thread(analyzer.analyze, source, await _paid_plans(ctx))
         an["source"] = source
     platform = platform or an["platform"]
     port = port or an["port"]
     if create:
-        await ctx.step(f"ساخت اپ {app} روی پلن {plan_id or an['plan']['id']}")
+        plan_id = plan_id or an["plan"]["id"]
+        await ctx.step(f"ساخت اپ {app} روی پلن {plan_id} (انتخاب خودکار بسته‌ی امکانات و شبکه‌ی خصوصی)")
         try:
-            await ctx.client.create_app(app, platform, plan_id or an["plan"]["id"])
+            cr = await ctx.client.create_app(app, platform, plan_id)
+            await ctx.step(f"اپ ساخته شد — پلن {cr.get('planID')}، بسته‌ی امکانات {cr.get('bundlePlanID')}", "done")
         except LiaraError as e:
             if e.status != 409:
                 raise
@@ -279,7 +295,7 @@ async def deploy(ctx: Ctx, source: str, app: str, create: bool = False, plan_id:
             if app not in mine:
                 await ctx.step(f"نام «{app}» قبلاً در لیارا توسط کاربر دیگری گرفته شده", "error")
                 return {"error": f"نام «{app}» در لیارا آزاد نیست؛ نام دیگری انتخاب کنید (مثلاً {app}-{int(time.time()) % 10000})."}
-        await ctx.step("اپ ساخته شد", "done")
+            await ctx.step("اپ از قبل وجود دارد؛ همان را به‌روزرسانی می‌کنم", "done")
     if envs:
         await ctx.step(f"تنظیم {len(envs)} متغیر محیطی (مقادیر در لاگ ذخیره نمی‌شوند)")
         await ctx.client.set_envs(app, {k: str(v) for k, v in envs.items()})
@@ -321,6 +337,21 @@ async def deploy(ctx: Ctx, source: str, app: str, create: bool = False, plan_id:
     else:
         await ctx.step(f"سایت بالا آمد: {app_url(app)}", "done")
     return result
+
+
+@tool("change_plan", "تغییر پلن (منابع CPU/RAM/دیسک) اپ از طریق API لیارا. اپ ری‌استارت می‌شود و هزینه تغییر می‌کند.",
+      {"app": APP, "plan_id": {"type": "string", "description": "شناسه‌ی پلن g2 از list_plans"}},
+      risk=Risk.HIGH, required=("app", "plan_id"),
+      approval=lambda a: (f"تغییر پلن «{a['app']}» به {a['plan_id']}",
+                          "اپ چند ثانیه ری‌استارت می‌شود و هزینه‌ی ساعتی بر اساس پلن جدید محاسبه می‌شود.",
+                          "با تغییر دوباره به پلن قبلی."))
+async def change_plan(ctx: Ctx, app: str, plan_id: str):
+    plans = await ctx.client.list_plans()
+    if plan_id not in plans:
+        return {"error": f"پلن {plan_id} وجود ندارد. پلن‌های مجاز: {', '.join(list((await _paid_plans(ctx)).keys())[:12])}"}
+    res = await ctx.client.change_plan(app, plan_id)
+    ctx.state.setdefault("last_fix_at", {})[app] = time.time()
+    return {"ok": True, "new_plan": plan_id, "api": res}
 
 
 @tool("set_env", "افزودن/تغییر متغیرهای محیطی اپ. توجه: اپ ری‌استارت می‌شود.",
@@ -394,3 +425,7 @@ async def add_domain(ctx: Ctx, app: str, domain: str):
                           "⛔ غیرقابل بازگشت است."))
 async def delete_app(ctx: Ctx, app: str):
     return await ctx.client.delete_app(app)
+
+
+# IaaS (virtual machine) tools register themselves on import
+from . import vm_tools  # noqa: E402,F401

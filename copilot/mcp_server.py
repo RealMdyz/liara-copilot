@@ -156,6 +156,42 @@ async def add_domain(app: str, domain: str, confirm_token: str = "") -> str:
     return await run_tool("add_domain", {"app": app, "domain": domain}, confirm_token or None)
 
 
+@mcp.tool()
+async def change_plan(app: str, plan_id: str, confirm_token: str = "") -> str:
+    """[REQUIRES CONFIRMATION] Change an app's plan (CPU/RAM) — only g2 plans from list_plans."""
+    return await run_tool("change_plan", {"app": app, "plan_id": plan_id}, confirm_token or None)
+
+
+@mcp.tool()
+async def list_vms() -> str:
+    """List Liara virtual machines (IaaS) with IP, OS, plan and power state."""
+    return await run_tool("list_vms", {})
+
+
+@mcp.tool()
+async def vm_options() -> str:
+    """Available VM plans (CPU/RAM/disk/monthly price), operating systems and setup recipes."""
+    return await run_tool("vm_options", {})
+
+
+@mcp.tool()
+async def create_vm(name: str, plan: str, os: str = "ubuntu-24.04", confirm_token: str = "") -> str:
+    """[REQUIRES CONFIRMATION] Create a Liara virtual machine and wait until it is ready."""
+    return await run_tool("create_vm", {"name": name, "plan": plan, "os": os}, confirm_token or None)
+
+
+@mcp.tool()
+async def vm_power(vm: str, action: str, confirm_token: str = "") -> str:
+    """[REQUIRES CONFIRMATION] start | stop | reboot | shutdown a virtual machine."""
+    return await run_tool("vm_power", {"vm": vm, "action": action}, confirm_token or None)
+
+
+@mcp.tool()
+async def vm_setup(vm: str, recipes: list[str], confirm_token: str = "") -> str:
+    """[REQUIRES CONFIRMATION] Configure software on a VM over SSH. recipes: update, security, docker, nginx, node, python, postgres, swap."""
+    return await run_tool("vm_setup", {"vm": vm, "recipes": recipes}, confirm_token or None)
+
+
 def main():
     mcp.run()
 

@@ -63,19 +63,22 @@ def _ts_seconds(ts) -> float:
 
 
 async def collect_evidence(client, app: str, minutes: int = 30, since: float | None = None) -> dict:
-    (details, e1), (releases, e2), (logs, e3), (metrics, e4), (probe_r, e5) = await asyncio.gather(
+    (details, e1), (releases, e2), (logs, e3), (metrics, e4), (probe_r, e5), (events, e6) = await asyncio.gather(
         _safe(client.get_app(app), "وضعیت اپ"),
         _safe(client.list_releases(app, 5), "ریلیزها"),
         _safe(client.logs(app, minutes=minutes), "لاگ‌ها"),
         _safe(client.metrics(app), "متریک‌ها"),
         _safe(probe(client, app), "تست HTTP"),
+        _safe(client.events(app, minutes=max(minutes, 120)), "رویدادهای پلتفرم"),
     )
-    limits = [e for e in (e1, e2, e3, e4, e5) if e]
+    limits = [e for e in (e1, e2, e3, e4, e5) if e]  # events are optional, not shown as a limitation
     if since and logs:
         logs = [l for l in logs if _ts_seconds(l["ts"]) >= since] or []
+    if events and not since:
+        logs = (logs or []) + [{"ts": 0, "line": f"[رویداد لیارا] {x}", "releaseId": None} for x in events[-15:]]
     return {"app": app, "details": details or {}, "releases": releases or [], "logs": logs or [],
             "metrics": (metrics or {}).get("metrics", metrics) or {}, "probe": probe_r or {},
-            "limitations": limits, "collected_at": time.strftime("%H:%M:%S")}
+            "events": events or [], "limitations": limits, "collected_at": time.strftime("%H:%M:%S")}
 
 
 # -------------------------------------------------------------------- rules
@@ -183,7 +186,7 @@ def analyze(ev: dict) -> dict:
             evid.append(f"زمان پاسخ: {pr['median_ms']}ms")
         add("memory", "کمبود حافظه / نشتی حافظه (Memory Leak)", conf, evid,
             [{"tool": "restart_app", "args": {"app": app}, "note": "راه‌حل موقت: حافظه آزاد می‌شود"},
-             {"tool": "change_plan_guide", "args": {"app": app}, "note": "اگر مصرف واقعی بالاست، پلن بزرگ‌تر"}],
+             {"tool": "suggest_plan", "args": {"app": app, "direction": "up"}, "note": "اگر مصرف واقعی بالاست: ارتقای پلن"}],
             "حافظه‌ی برنامه پر شده و Garbage Collector مدام کار می‌کند؛ همین باعث کندی و در نهایت "
             "کشته‌شدن کانتینر (OOM) می‌شود. اگر بعد از ری‌استارت مصرف دوباره بالا رفت، مشکل نشتی در کد است.",
             permanent="در کد، داده‌ای که بدون محدودیت در حافظه انباشته می‌شود (مثلاً کش یا آرایه‌ی سراسری) را محدود کنید."
@@ -199,7 +202,7 @@ def analyze(ev: dict) -> dict:
         if any("504" in l for l in _lines(ev)):
             evid.append("خطای 504 (timeout) در لاگ‌ها")
         add("cpu", "پردازنده (CPU) اشباع شده است", 0.8 if cpu and cpu >= 85 else 0.55, evid,
-            [{"tool": "change_plan_guide", "args": {"app": app}}],
+            [{"tool": "suggest_plan", "args": {"app": app, "direction": "up"}, "note": "ارتقای پلن به CPU بیشتر"}],
             "پردازش سنگین در برخی مسیرها باعث شده سرور نتواند به‌موقع به همه‌ی درخواست‌ها پاسخ دهد.",
             permanent="عملیات سنگین (گزارش‌گیری، پردازش تصویر) را به صف پس‌زمینه یا کش منتقل کنید.")
 

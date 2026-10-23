@@ -114,7 +114,21 @@ async def dashboard():
                 "http": pr.get("statuses", [None])[0], "latency_ms": pr.get("median_ms"),
                 "cpu": m.get("cpu"), "mem": m.get("memory")}
 
-    return {"apps": await asyncio.gather(*[one(a) for a in apps]), "mock": config.MOCK_MODE}
+    vms = []
+    try:
+        for v in await CLIENT.vm_list():
+            ip = ""
+            try:
+                full = await CLIENT.vm_get(v["_id"])
+                ip = ", ".join(i.get("address", "") for i in full.get("IPs", []))[:40]
+                v = full
+            except Exception:
+                pass
+            vms.append({"name": v.get("name"), "state": v.get("state"), "power": v.get("power"),
+                        "plan": v.get("plan"), "os": v.get("OS"), "ip": ip})
+    except Exception:
+        pass
+    return {"apps": await asyncio.gather(*[one(a) for a in apps]), "vms": vms, "mock": config.MOCK_MODE}
 
 
 @app.get("/api/audit")
