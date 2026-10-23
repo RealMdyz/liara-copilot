@@ -74,7 +74,7 @@ async def prepare_deploy(ctx: "Ctx", args: dict) -> dict:
         an["source"] = source
         ctx.state["analysis"] = an
     from pathlib import Path
-    dotenv = analyzer.dotenv_values(Path(an["path"]))
+    dotenv, dotenv_src = analyzer.dotenv_values(Path(an["path"]), with_source=True)
     given = {k: str(v) for k, v in (args.get("envs") or {}).items()
              if v not in (None, "") and not str(v).startswith("<")}
     on_liara: set = set()
@@ -93,8 +93,11 @@ async def prepare_deploy(ctx: "Ctx", args: dict) -> dict:
             envs[k], meta[k] = given[k], {"required": False, "state": "given",
                                           "hint": "مقدار گفته‌شده در گفت‌وگو" + (f" · {hint}" if hint else "")}
         elif k in dotenv and dotenv[k]:
+            local = re.search(r"(localhost|127\.0\.0\.1|0\.0\.0\.0)", dotenv[k])
             envs[k], meta[k] = dotenv[k], {"required": False, "state": "dotenv",
-                                           "hint": "از فایل ‎.env‎ پروژه (خالی بگذارید = همین مقدار)"}
+                                           "hint": f"از فایل ‎{dotenv_src.get(k, '.env')}‎ پروژه (خالی بگذارید = همین مقدار)"
+                                                   + (" · ⚠️ به localhost اشاره می‌کند؛ روی لیارا در دسترس نیست و باید آدرس واقعی (مثلاً دیتابیس لیارا) بگذارید"
+                                                      if local and not k.upper().endswith(("HOST_BIND", "BIND")) else "")}
         elif k in on_liara:
             envs[k], meta[k] = "<keep>", {"required": False, "state": "on_liara", "on_liara": True,
                                          "hint": "روی لیارا تنظیم شده؛ خالی بگذارید تا تغییر نکند"}
@@ -197,7 +200,8 @@ async def analyze_project(ctx: Ctx, source: str):
 @tool("diagnose",
       "عیب‌یابی کامل SRE: لاگ، وضعیت، ریلیزها، متریک و تست HTTP را جمع می‌کند و علت‌های محتمل را با شواهد و راه‌حل اولویت‌بندی می‌کند. برای «سایت کند است»، «خطای ۵۰۰»، «سایت بالا نمی‌آید» استفاده کن.",
       {"app": APP, "symptom": {"type": "string", "description": "توصیف مشکل از زبان کاربر"}}, required=("app",))
-async def diagnose(ctx: Ctx, app: str, symptom: str = "", _build_tail: list | None = None):
+async def diagnose(ctx: Ctx, app: str, symptom: str = "", _build_tail: list | None = None,
+                   _release_logs: list | None = None):
     await ctx.step("جمع‌آوری شواهد: وضعیت سرویس، لاگ‌ها، رویدادها، ریلیزها، متریک‌ها، متغیرهای محیطی و تست مستقیم سایت")
     ev = await diagnosis.collect_evidence(ctx.client, app)
     src = app_source(ctx, app)
@@ -213,8 +217,13 @@ async def diagnose(ctx: Ctx, app: str, symptom: str = "", _build_tail: list | No
         ev["env_check"] = await _env_check(ctx, app)
     except Exception:
         pass
+    if _release_logs:
+        seen = {l["line"] for l in _release_logs}
+        ev["logs"] = [l for l in ev["logs"] if l["line"] not in seen] + _release_logs
+        ev["release_logs"] = [l["line"] for l in _release_logs]
     if _build_tail:
         ev["logs"] = ev["logs"] + [{"ts": 0, "line": f"[build] {l}", "releaseId": None} for l in _build_tail]
+        ev["build_logs"] = list(_build_tail)
     await ctx.step(f"{len(ev['logs'])} خط لاگ و {len(ev['releases'])} ریلیز بررسی شد", "done")
     await ctx.step("تحلیل شواهد و رتبه‌بندی علت‌های محتمل")
     rep = diagnosis.analyze(ev)
@@ -226,6 +235,22 @@ async def diagnose(ctx: Ctx, app: str, symptom: str = "", _build_tail: list | No
 
 
 from . import config as _config  # noqa: E402
+async def _wait_release_logs(ctx: Ctx, app: str, rid: str, wait_s: int = 45) -> list[dict]:
+    """After an UNHEALTHY release Liara keeps restarting the container; its stdout/stderr (the real
+    crash reason) shows up in the app logs a few seconds later. Poll the logs of *this* release."""
+    mock = getattr(ctx.client, "is_mock", False)
+    t0, lines = time.time(), []
+    while True:
+        try:
+            lines = await ctx.client.logs(app, minutes=20, limit=400, release_id=rid)
+        except Exception:
+            lines = []
+        crash = any(re.search(r"(Traceback|Error|Exception|exited|not found|No such file)", l["line"]) for l in lines)
+        if crash or mock or time.time() - t0 > wait_s:
+            return lines
+        await asyncio.sleep(5)
+
+
 APP_SOURCES_FILE = os.path.join(_config.DATA_DIR, "app_sources.json")
 
 
@@ -470,13 +495,18 @@ async def deploy(ctx: Ctx, source: str, app: str, create: bool = False, plan_id:
     rel = await ctx.client.create_release(app, sid, platform, port, platform_config=rt.get("platform_config") or {},
                                           args=args)
     rid = rel.get("releaseID") or rel.get("_id") or (rel.get("release") or {}).get("_id")
-    state, last, t0, tail = "", "", time.time(), []
+    state, last, t0, tail, build_all, since = "", "", time.time(), [], [], None
     while time.time() - t0 < 900:
         r = await ctx.client.get_release(rid)
         state = str(r.get("state", "")).upper()
         try:
-            bl = await ctx.client.build_logs(rid)
-            tail = [o.get("line", "") for o in bl.get("buildOutput", [])][-8:] or tail
+            bl = await ctx.client.build_logs(rid, since) if since else await ctx.client.build_logs(rid)
+            out_lines = bl.get("buildOutput", []) or []
+            if out_lines:
+                since = out_lines[-1].get("createdAt") or since
+                new = [o.get("line", "") for o in out_lines]
+                build_all = (build_all + [l for l in new if not build_all or l not in build_all[-len(new):]])[-400:]
+                tail = build_all[-8:]
         except Exception:
             pass
         if state != last:
@@ -499,9 +529,15 @@ async def deploy(ctx: Ctx, source: str, app: str, create: bool = False, plan_id:
         result["unset_env_vars"] = missing_env
     if not ok or (is_web and pr and not pr.get("ok")):
         await ctx.step("انتشار سالم نبود؛ لاگ‌های همین نسخه را برای پیدا کردن علت می‌خوانم", "error")
-        if not getattr(ctx.client, "is_mock", False):
-            await asyncio.sleep(8)  # let the runtime logs of the failed release arrive
-        result["auto_diagnosis"] = await diagnose(ctx, app, "deploy failed", _build_tail=tail)
+        rlogs = await _wait_release_logs(ctx, app, rid)
+        if rlogs:
+            await ctx.step(f"{len(rlogs)} خط لاگ اجرای همین نسخه دریافت شد", "done",
+                           detail="\n".join(l["line"] for l in rlogs[-4:]))
+        else:
+            await ctx.step("لیارا هنوز لاگ اجرایی برای این نسخه نفرستاده؛ تحلیل با لاگ build و وضعیت انجام می‌شود", "warn")
+        result["auto_diagnosis"] = await diagnose(ctx, app, "deploy failed", _build_tail=build_all[-60:],
+                                                  _release_logs=rlogs)
+        result["release_log_tail"] = [l["line"] for l in rlogs[-25:]]
     else:
         await ctx.step(f"سایت بالا آمد: {app_url(app)}" if is_web else "برنامه اجرا شد (بدون وب‌سرور)", "done")
         if missing_env:

@@ -95,6 +95,32 @@ def third_party_imports(root: Path) -> set[str]:
     return found
 
 
+def _asgi_target(root: Path, mod_app: str) -> tuple[str, str | None]:
+    """Decide how uvicorn must import the app.
+
+    `backend/app.py` that does `from config import settings` (sibling module, imported as top-level)
+    only works when started *inside* backend/ — exactly how it runs on the developer's machine
+    (`cd backend && uvicorn app:app`). From the project root that is a ModuleNotFoundError and the
+    release goes UNHEALTHY. In that case we keep the cwd at the root and add `--app-dir backend`.
+    Package-style imports (`from backend.x import` / relative `from .x import`) keep `backend.app:app`.
+    """
+    mod, var = mod_app.split(":")
+    parts = mod.split(".")
+    if len(parts) == 1:
+        return mod_app, None
+    pkg_dir = root.joinpath(*parts[:-1])
+    siblings = {p.stem for p in pkg_dir.glob("*.py")} | {p.name for p in pkg_dir.iterdir() if p.is_dir() and not p.name.startswith((".", "_"))}
+    top = parts[0]
+    txt = "\n".join(_read(p) for p in pkg_dir.rglob("*.py") if not any(x in SKIP_DIRS for x in p.parts))
+    package_style = re.search(rf"^\s*(?:from|import)\s+{re.escape(top)}[\.\s]", txt, re.M) or \
+        re.search(r"^\s*from\s+\.", txt, re.M)
+    sibling_style = any(re.search(rf"^\s*(?:from|import)\s+{re.escape(sib)}\b", txt, re.M)
+                        for sib in siblings if sib not in ("__init__", parts[-1]))
+    if sibling_style and not package_style:
+        return f"{parts[-1]}:{var}", "/".join(parts[:-1])
+    return mod_app, None
+
+
 def plan_runtime(root: Path, platform: str) -> dict:
     """Returns {port, args, platform_config, is_web, source, notes[], warnings[], inject_requirements[]}."""
     lj = read_liara_json(root)
@@ -125,12 +151,20 @@ def _python(root: Path, platform: str, out: dict):
     imports = third_party_imports(root)
     files = list(_py_files(root))
 
-    if not (root / "requirements.txt").exists() and imports:
+    sub_reqs = [p for p in sorted(root.glob("*/requirements.txt")) if p.parent.name not in SKIP_DIRS]
+    if not (root / "requirements.txt").exists() and sub_reqs:
+        lines = [l.strip() for l in _read(sub_reqs[0]).splitlines() if l.strip() and not l.strip().startswith(("#", "-"))]
+        out["inject_requirements"] += lines
+        reqs = [re.split(r"[<>=!~\[; ]", l)[0].lower() for l in lines]
+        rel = sub_reqs[0].relative_to(root).as_posix()
+        out["warnings"].append(f"فایل وابستگی‌ها در ‎{rel}‎ است ولی لیارا فقط ‎requirements.txt‎ ریشه را نصب می‌کند؛ "
+                               "محتوای آن را در ریشه‌ی بسته‌ی آپلود قرار می‌دهم.")
+    if not (root / "requirements.txt").exists() and not sub_reqs and imports:
         pkgs = sorted({IMPORT_TO_PIP.get(i, i) for i in imports})
         out["inject_requirements"] += pkgs
         out["warnings"].append("فایل ‎requirements.txt‎ ندارید؛ لیارا فقط از همین فایل پکیج نصب می‌کند. "
                                f"بر اساس importها یک نسخه ساختم و داخل بسته‌ی آپلود قرار می‌دهم: {', '.join(pkgs)}")
-    else:
+    if (root / "requirements.txt").exists() or sub_reqs:
         missing = sorted({IMPORT_TO_PIP.get(i, i) for i in imports
                           if IMPORT_TO_PIP.get(i, i).lower() not in reqs and i.lower() not in reqs
                           and i in IMPORT_TO_PIP})
@@ -170,8 +204,11 @@ def _python(root: Path, platform: str, out: dict):
             break
     if asgi:
         port = 8000
-        out.update(port=port, args=[f"uvicorn {asgi[0]} --host 0.0.0.0 --port {port}"])
-        out["notes"].append(f"برنامه‌ی {asgi[1]} است؛ با uvicorn روی ‎0.0.0.0:{port}‎ اجرا می‌شود (‎{asgi[0]}‎).")
+        target, app_dir = _asgi_target(root, asgi[0])
+        cmd = f"uvicorn {target} --host 0.0.0.0 --port {port}" + (f" --app-dir {app_dir}" if app_dir else "")
+        out.update(port=port, args=[cmd])
+        out["notes"].append(f"برنامه‌ی {asgi[1]} است؛ با uvicorn روی ‎0.0.0.0:{port}‎ اجرا می‌شود (‎{target}‎"
+                            + (f"، از داخل پوشه‌ی ‎{app_dir}‎ چون importهای آن نسبت به همین پوشه نوشته شده‌اند" if app_dir else "") + ").")
         if "uvicorn" not in reqs and "uvicorn" not in out["inject_requirements"]:
             out["inject_requirements"].append("uvicorn")
             out["warnings"].append("پکیج uvicorn در requirements نیست؛ به بسته‌ی آپلود اضافه می‌شود.")

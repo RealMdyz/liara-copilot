@@ -96,6 +96,10 @@ LOCALHOST_RE = re.compile(r"(?:running|listening|serving|started|booting)[^\n]{0
 ENTRY_RE = re.compile(r"(?:can't open file ['\"]?([^'\"\s]+)|No such file or directory: ['\"]([^'\"]+\.py)|Error: Cannot find module ['\"](/[^'\"]+)['\"])")
 NOCMD_RE = re.compile(r"(?:(\w+): (?:command )?not found|exec: \"?(\w+)\"?: executable file not found)")
 DB_RE = re.compile(r"(ECONNREFUSED|could not connect to server|Connection refused|ETIMEDOUT|getaddrinfo ENOTFOUND)")
+PY_FILE_RE = re.compile(r'File "/(?:usr/src/app|app|workspace)/([\w./-]+\.py)", line (\d+)')
+PY_EXC_RE = re.compile(r"^\s*((?:[A-Za-z_][\w.]*\.)?[A-Z]\w*(?:Error|Exception|Exit|Interrupt))(?::\s*(.*))?$")
+PYDANTIC_FIELD_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*$\n\s*(?:Field required|field required|Input should|value is not)", re.M)
+PIP_FAIL_RE = re.compile(r"(No matching distribution found for ([\w\-\[\]=<>.]+)|Could not find a version that satisfies the requirement ([\w\-\[\]=<>.]+)|error: subprocess-exited-with-error|Failed building wheel for ([\w\-]+))", re.I)
 HTTP_LINE_RE = re.compile(r"\b(GET|POST|PUT|DELETE|PATCH) (\S+) (\d{3}) (\d+)ms")
 
 
@@ -111,7 +115,9 @@ def _find(ev, regex, k=3):
 def _code_refs(ev) -> list[dict]:
     refs, seen = [], set()
     for l in _lines(ev):
-        m = STACK_RE.search(l)
+        m = STACK_RE.search(l) or PY_FILE_RE.search(l)
+        if m and "site-packages" in l:
+            continue
         if m and (m.group(1), m.group(2)) not in seen and "node_modules" not in m.group(1):
             seen.add((m.group(1), m.group(2)))
             f = m.group(1)
@@ -226,6 +232,51 @@ def analyze(ev: dict) -> dict:
             "برنامه به کتابخانه‌ای نیاز دارد که در فایل وابستگی‌ها تعریف نشده.",
             permanent="آن را به فایل وابستگی‌ها اضافه کنید و دوباره دیپلوی کنید.")
 
+    # 5a. Python crash at startup (traceback) / settings validation / pip build failure
+    all_lines = _lines(ev)
+    text = "\n".join(all_lines)
+    fields = [f for f in PYDANTIC_FIELD_RE.findall(text) if f.lower() not in ("type", "input", "for", "error")]
+    if fields:
+        envs_needed = sorted({f.upper() for f in fields})
+        add("settings_missing", f"برنامه هنگام شروع به {len(envs_needed)} تنظیم/متغیر محیطی نیاز دارد که مقدار ندارند", 0.95,
+            [f"لاگ: خطای اعتبارسنجی تنظیمات (pydantic) برای: {', '.join(fields[:8])}",
+             "این یعنی برنامه اصلاً بالا نمی‌آید تا وقتی این مقدارها تنظیم شوند"],
+            [{"tool": "set_env", "args": {"app": app, "variables": {k: f"<{k}>" for k in envs_needed}},
+              "note": "مقدارها را در کارت تأیید وارد کنید (از فایل .env محلی‌تان)"}],
+            "روی سیستم خودتان این مقدارها از فایل ‎.env‎ خوانده می‌شوند، ولی فایل ‎.env‎ آپلود نمی‌شود؛ "
+            "پس روی لیارا باید به‌صورت متغیر محیطی تنظیم شوند.")
+    exc_i = None
+    for i in range(len(all_lines) - 1, -1, -1):
+        if PY_EXC_RE.match(all_lines[i]) and any("Traceback" in x for x in all_lines[max(0, i - 60):i]):
+            exc_i = i
+            break
+    if exc_i is not None and not fields:
+        exc = all_lines[exc_i].strip()
+        frames = [l.strip() for l in all_lines[max(0, exc_i - 12):exc_i] if l.strip().startswith("File ")][-3:]
+        modm = MODULE_RE.search(exc)
+        if modm:
+            name = modm.group(2) or modm.group(3)
+            local_pkg = (ev.get("runtime") or {}).get("args") and "--app-dir" not in str((ev.get("runtime") or {}).get("args"))
+            add("module", f"ماژول ‎{name}‎ هنگام اجرا پیدا نشد", 0.9, [f"لاگ: {exc}"] + [f"در: {f}" for f in frames],
+                ([{"tool": "deploy", "args": {"source": ev.get("source"), "app": app}, "note": "انتشار دوباره با دستور اجرای اصلاح‌شده"}]
+                 if ev.get("source") else []),
+                f"اگر ‎{name}‎ یکی از فایل‌های خود پروژه است، برنامه از پوشه‌ی اشتباهی اجرا شده (روی سیستم خودتان احتمالاً داخل همان پوشه اجرا می‌کنید)؛ "
+                f"اگر پکیج است، در requirements.txt نیست.",
+                permanent=f"اگر ‎{name}‎ پکیج است آن را به ‎requirements.txt‎ اضافه کنید؛ اگر فایل پروژه است، دستور اجرا باید از داخل همان پوشه باشد "
+                          "(مثلاً ‎uvicorn app:app --app-dir backend --host 0.0.0.0 --port 8000‎).")
+        else:
+            add("crash", f"برنامه هنگام شروع خطا می‌دهد: {exc[:90]}", 0.9,
+                [f"لاگ: {exc}"] + [f"در: {f}" for f in frames],
+                [], "برنامه قبل از اینکه به درخواست‌ها جواب بدهد با این خطا بسته می‌شود؛ لیارا هم به همین دلیل نسخه را UNHEALTHY می‌داند.",
+                permanent="خط و فایل بالا را بررسی کنید؛ اگر خطا به متغیر/فایل/سرویسی اشاره می‌کند که روی سیستم شما هست "
+                          "ولی روی لیارا نیست (مثل ‎.env‎، فایل محلی، دیتابیس localhost)، همان را روی لیارا فراهم کنید.")
+    pf = PIP_FAIL_RE.search(text)
+    if pf:
+        pkg = pf.group(2) or pf.group(3) or pf.group(4) or "یکی از پکیج‌ها"
+        add("build_dep", f"نصب پکیج ‎{pkg}‎ در build شکست خورد", 0.9, [f"لاگ build: {pf.group(0)}"], [],
+            "لیارا نتوانست وابستگی‌های requirements.txt را نصب کند، پس برنامه ساخته نشد.",
+            permanent="نسخه‌ی پکیج را در requirements.txt اصلاح کنید (نسخه‌ی خیلی جدید/قدیمی یا مخصوص ویندوز مثل pywin32 مشکل‌ساز است).")
+
     # 5b. wrong entry file / start command
     src = ev.get("source")
     rt = ev.get("runtime") or {}
@@ -304,6 +355,9 @@ def analyze(ev: dict) -> dict:
         "status": "healthy" if healthy else ("degraded" if pr.get("ok") else "down"),
         "probe": pr, "http": stats, "metrics": m, "plan": d.get("planID"),
         "limitations": ev["limitations"],
+        "log_tail": [l for l in (ev.get("release_logs") or [x["line"] for x in ev["logs"] if not x["line"].startswith("[")])
+                     if l.strip()][-25:],
+        "build_tail": [l for l in (ev.get("build_logs") or []) if l.strip()][-12:],
     }
     return {"summary": summary, "hypotheses": hyps}
 

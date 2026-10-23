@@ -434,8 +434,9 @@ function renderDiagnosis(r){
      ${x.fixes.length?`<div class="fix">🛠 راه‌حل فوری: ${x.fixes.map(f=>esc(TOOLFA[f.tool]||f.tool)+(f.note?' — '+esc(f.note):'')).join(' / ')}</div>`:''}
      ${x.permanent_fix?`<div class="fix perm">🔧 راه‌حل دائمی: ${md(x.permanent_fix)}</div>`:''}
      ${(x.code||[]).map(c=>`<div class="codeL">📍 <code>${esc(c.file)}:${c.line}</code> ${c.url?`<a href="${c.url}" target="_blank">مشاهده در گیت‌هاب</a>`:''}</div>`).join('')}</div>`).join('');
+  const logBlock=(t,arr)=>arr&&arr.length?`<details style="margin-top:10px"><summary style="cursor:pointer;color:var(--muted);font-size:12.5px">${t} (${fa(arr.length)} خط)</summary><div class="logs" style="border-radius:10px;margin-top:6px;max-height:240px">${arr.map(l=>`<span class="${/error|exception|traceback|fail|refused|not found/i.test(l)?'e':''}">${esc(l)}</span>`).join('\n')}</div></details>`:'';
   const lim=(s.limitations||[]).length?`<div class="meta">ℹ️ ${s.limitations.map(esc).join(' · ')}</div>`:'';
-  add(el('card',`<div class="hd"><span class="tt">🩺 گزارش عیب‌یابی</span><span class="chip ${L[2]}">${L[0]} ${L[1]}</span></div><div class="bd"><div class="stats">${stats}</div>${hyps||'<div class="empty-s" style="padding:10px">علتی پیدا نشد؛ سرویس سالم پاسخ می‌دهد.</div>'}${lim}</div>`));
+  add(el('card',`<div class="hd"><span class="tt">🩺 گزارش عیب‌یابی</span><span class="chip ${L[2]}">${L[0]} ${L[1]}</span></div><div class="bd"><div class="stats">${stats}</div>${hyps||'<div class="empty-s" style="padding:10px">علتی پیدا نشد؛ سرویس سالم پاسخ می‌دهد.</div>'}${logBlock('📜 آخرین لاگ‌های اجرای برنامه',s.log_tail)}${logBlock('🔨 آخرین خطوط build',s.build_tail)}${lim}</div>`));
 }
 function renderEnvs(d){if(!d||d.error)return;
   const L={missing:'در کد هست، روی لیارا نیست',empty:'خالی',suspicious:'مقدار نمونه/مشکوک',ok:'تنظیم شده'};

@@ -92,6 +92,10 @@ def detect_platform(root: Path) -> tuple[str, list[str]]:
         return "docker", ["Dockerfile پیدا شد"]
     if any(p for p in root.glob("*.py")):
         return "python", ["فایل‌های پایتون پیدا شد (بدون requirements.txt)"]
+    sub = [p for p in sorted(root.glob("*/requirements.txt")) if p.parent.name not in IGNORE_DIRS]
+    if sub or list(root.glob("*/*.py"))[:1]:
+        where = sub[0].parent.name if sub else next(root.glob("*/*.py")).parent.name
+        return "python", [f"پروژه‌ی پایتون داخل پوشه‌ی ‎{where}/‎"]
     if has("index.html"):
         return "static", ["فقط فایل‌های HTML/CSS/JS"]
     return "docker", ["نوع پروژه مشخص نشد؛ بهتر است Dockerfile اضافه شود"]
@@ -149,14 +153,28 @@ def _parse_env_file(p: Path) -> dict[str, str]:
     return out
 
 
-def dotenv_values(root: Path) -> dict[str, str]:
-    """Values from the project's own .env / .env.local (never uploaded; used to pre-fill env vars)."""
+def dotenv_files(root: Path, max_depth: int = 2) -> list[Path]:
+    """The project's own .env files: root and sub-folders such as backend/.env (never uploaded)."""
+    found = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        rel_depth = len(Path(dirpath).relative_to(root).parts)
+        dirnames[:] = [d for d in dirnames if d not in IGNORE_DIRS and not d.startswith(".") and rel_depth < max_depth]
+        for name in (".env", ".env.local", ".env.production"):
+            if name in filenames:
+                found.append(Path(dirpath) / name)
+    return sorted(found, key=lambda p: len(p.relative_to(root).parts))
+
+
+def dotenv_values(root: Path, with_source: bool = False):
+    """Values from the project's .env files (root first, then sub-folders; root wins on conflicts).
+    Used only to pre-fill env vars on Liara — the files themselves are never uploaded."""
     out: dict[str, str] = {}
-    for name in (".env", ".env.local", ".env.production"):
-        p = root / name
-        if p.exists():
-            out.update(_parse_env_file(p))
-    return out
+    src: dict[str, str] = {}
+    for p in reversed(dotenv_files(root)):
+        for k, v in _parse_env_file(p).items():
+            out[k] = v
+            src[k] = str(p.relative_to(root)).replace(os.sep, "/")
+    return (out, src) if with_source else out
 
 
 def example_env(root: Path) -> dict[str, str]:
@@ -267,8 +285,10 @@ def analyze(source: str, plans: dict | None = None) -> dict:
     warnings = []
     if not (root / ".gitignore").exists():
         warnings.append("فایل ‎.gitignore‎ ندارید؛ ممکن است فایل‌های اضافه آپلود شوند.")
-    if (root / ".env").exists():
-        warnings.append("فایل ‎.env‎ در پروژه هست؛ آن را آپلود نمی‌کنم و مقادیرش را به‌صورت متغیر محیطی امن تنظیم می‌کنیم.")
+    envf = dotenv_files(root)
+    if envf:
+        names = "، ".join(str(p.relative_to(root)).replace(os.sep, "/") for p in envf)
+        warnings.append(f"فایل‌های ‎{names}‎ در پروژه هست؛ آپلودشان نمی‌کنم و مقادیرشان را به‌صورت متغیر محیطی لیارا پیش‌فرض می‌گذارم.")
     warnings += rt.get("warnings", [])
     return {
         "path": str(root), "platform": platform, "platform_fa": PLATFORM_FA.get(platform, platform),

@@ -310,7 +310,7 @@ class MockLiara:
         return {"message": "rolled back"}
 
     # --------------------------------------------------------- observability
-    async def logs(self, app, minutes=30, limit=300):
+    async def logs(self, app, minutes=30, limit=300, release_id=None):
         a = self._app(app)
         base = int(time.time()) - minutes * 60
         healthy = [

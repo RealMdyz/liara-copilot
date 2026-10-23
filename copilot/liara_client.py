@@ -231,13 +231,15 @@ class LiaraClient:
             raise
 
     # ------------------------------------------------------------ observability
-    async def logs(self, app: str, minutes: int = 30, limit: int = 300) -> list[dict]:
+    async def logs(self, app: str, minutes: int = 30, limit: int = 300, release_id: str | None = None) -> list[dict]:
         """GET /v2/projects/{app}/logs (liara-cli). Falls back to documented v1 endpoint."""
         start = int(time.time()) - minutes * 60
         lines: list[dict] = []
         try:
-            data = await self._req("GET", f"/v2/projects/{app}/logs",
-                                   params={"start": start, "direction": "forward", "last_lines": "false"})
+            params = {"start": start, "direction": "forward", "last_lines": "false"}
+            if release_id:
+                params["releaseId"] = release_id  # same filter `liara app logs --release` uses
+            data = await self._req("GET", f"/v2/projects/{app}/logs", params=params)
             for entry in data.get("data", []) or []:
                 rid = (entry.get("metaData") or {}).get("releaseId")
                 for ts, line in entry.get("values", []):

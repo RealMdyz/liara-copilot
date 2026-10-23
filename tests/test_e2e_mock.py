@@ -314,3 +314,55 @@ def test_api_conversations_and_voice_endpoint():
     assert r.status_code == 501
     assert cl.delete(f"/api/conversations/{sid}").json()["ok"]
     assert not any(x["id"] == sid for x in cl.get("/api/conversations").json())
+
+
+def test_real_world_python_failures_are_explained():
+    from copilot import diagnosis
+    base = {"app": "agent-sagent", "details": {"port": 8000, "envs": []}, "metrics": {}, "limitations": [],
+            "probe": {"ok": False, "statuses": [502]}, "releases": [{"_id": "r3", "state": "UNHEALTHY"}],
+            "source": "/p", "runtime": {"args": ["uvicorn backend.app:app --host 0.0.0.0 --port 8000"]}}
+    tb = ["Traceback (most recent call last):",
+          '  File "/usr/src/app/backend/app.py", line 3, in <module>',
+          "    from config import settings",
+          "ModuleNotFoundError: No module named 'config'"]
+    rep = diagnosis.analyze({**base, "logs": [{"ts": i, "line": l} for i, l in enumerate(tb)], "release_logs": tb})
+    top = rep["hypotheses"][0]
+    assert top["key"] == "module" and "config" in top["title"] and top["code"][0]["file"].endswith("app.py")
+    assert rep["summary"]["log_tail"][-1].startswith("ModuleNotFoundError")
+    pyd = ["Traceback (most recent call last):", '  File "/usr/src/app/backend/config.py", line 9, in <module>',
+           "pydantic_core._pydantic_core.ValidationError: 2 validation errors for Settings",
+           "openai_api_key", "  Field required [type=missing, input_value={}, input_type=dict]",
+           "database_url", "  Field required [type=missing, input_value={}, input_type=dict]"]
+    top = diagnosis.analyze({**base, "logs": [{"ts": i, "line": l} for i, l in enumerate(pyd)]})["hypotheses"][0]
+    assert top["key"] == "settings_missing"
+    assert set(top["fixes"][0]["args"]["variables"]) == {"OPENAI_API_KEY", "DATABASE_URL"}
+    crash = ["Traceback (most recent call last):", '  File "/usr/src/app/main.py", line 5, in <module>',
+             "FileNotFoundError: [Errno 2] No such file or directory: 'data/products.json'"]
+    top = diagnosis.analyze({**base, "logs": [{"ts": i, "line": l} for i, l in enumerate(crash)]})["hypotheses"][0]
+    assert top["key"] in ("crash", "entry")
+    pip = ["ERROR: Could not find a version that satisfies the requirement pywin32==306",
+           "ERROR: No matching distribution found for pywin32==306"]
+    top = diagnosis.analyze({**base, "logs": [{"ts": i, "line": f"[build] {l}"} for i, l in enumerate(pip)]})["hypotheses"][0]
+    assert top["key"] == "build_dep" and "pywin32" in top["title"]
+
+
+def test_backend_folder_project_runs_from_its_folder_and_reads_backend_env(tmp_path):
+    async def go():
+        p = tmp_path / "shop"
+        (p / "backend").mkdir(parents=True)
+        (p / "backend" / "app.py").write_text("from fastapi import FastAPI\nfrom config import settings\napp = FastAPI()\n")
+        (p / "backend" / "config.py").write_text("import os\nKEY = os.getenv('OPENAI_API_KEY')\nsettings = 1\n")
+        (p / "backend" / "requirements.txt").write_text("fastapi==0.115.0\nuvicorn\n")
+        (p / "backend" / ".env").write_text("OPENAI_API_KEY=sk-local\n")
+        c = MockLiara()
+        s = Session(c)
+        evs = await run(s, f"پروژه‌ی {p} را دیپلوی کن اسم shop-be")
+        ap = next(e for e in evs if e["type"] == "approval")
+        assert "uvicorn app:app --host 0.0.0.0 --port 8000 --app-dir backend" in ap["impact"]
+        inp = {i["key"]: i for i in ap["inputs"]}
+        assert inp["OPENAI_API_KEY"]["state"] == "dotenv" and "backend/.env" in inp["OPENAI_API_KEY"]["hint"]
+        assert {e["key"]: e["value"] for e in c.apps["shop-be"]["envs"]}["OPENAI_API_KEY"] == "sk-local"
+        import tarfile
+        names = tarfile.open(c.sources[next(iter(c.sources))]).getnames()
+        assert "requirements.txt" in names and "backend/.env" not in names
+    asyncio.run(go())
