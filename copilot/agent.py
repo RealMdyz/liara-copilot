@@ -27,7 +27,8 @@ SYSTEM_PROMPT = """تو «لیارا کوپایلوت» هستی؛ همکار ف
 4. اگر راه‌حل موقت است (مثل ری‌استارت برای نشتی حافظه)، صریح بگو و راه‌حل دائمی در کد (فایل و خط) را هم بگو.
 5. اگر ابزاری limitation برگرداند، محدودیت API لیارا را شفاف به کاربر اعلام کن و کاری که خودش باید انجام دهد را قدم‌به‌قدم بگو (مثل شارژ حساب، تنظیم DNS در ایرنیک، تغییر پلن از پنل).
 6. اگر کاربر عملیاتی را رد کرد، احترام بگذار و گزینه‌ی جایگزین بده.
-7. هیچ‌وقت مقدار متغیرهای محیطی یا توکن را در پاسخ تکرار نکن.
+7. هیچ‌وقت مقدار متغیرهای محیطی یا توکن را در پاسخ تکرار نکن. برای deploy مقدار env نساز و حدس نزن: سیستم خودش
+   متغیرهای لازم را از کد و فایل ‎.env‎ پروژه پیدا می‌کند و در کارت تأیید از کاربر می‌پرسد. فقط مقدارهایی که خود کاربر گفته را در envs بفرست.
 8. اگر نام اپ مشخص نیست و چند اپ وجود دارد، با list_apps پیدا کن یا کوتاه بپرس.
 9. دو نوع سرویس داری: «اپ» (PaaS؛ برای سایت و برنامه، زیرساخت با لیارا) و «سرور مجازی» (IaaS؛ لینوکس کامل با دسترسی root).
    برای سایت/API معمولاً اپ بهتر است؛ اگر کاربر سرور، VPS، ربات دائمی، VPN، یا کنترل کامل سیستم‌عامل خواست، سرور مجازی پیشنهاد بده.
@@ -91,14 +92,21 @@ class Session:
         if not t:
             return {"error": f"ابزار ناشناخته: {name}"}
         args = {k: v for k, v in (args or {}).items() if v is not None}
+        if t.prepare:
+            try:
+                args = await t.prepare(self.ctx(), args)
+            except Exception as e:  # noqa
+                return {"error": f"آماده‌سازی {name} ناموفق بود: {type(e).__name__}: {e}"}
         if needs_approval(t.risk):
             title, impact, rollback = t.approval(args) if t.approval else (name, "", "")
             inputs, target = [], ""
+            meta = args.get("_env_meta") or {}
             for key in ("variables", "envs"):
                 if isinstance(args.get(key), dict):
                     target = key
-                    inputs = [{"key": k, "required": str(v).startswith("<") or v in ("", None),
-                               "hint": "" if not str(v).startswith("<") else "مقدار را وارد کنید"}
+                    inputs = [{"key": k,
+                               "required": meta.get(k, {}).get("required", str(v).startswith("<") or v in ("", None)),
+                               "hint": meta.get(k, {}).get("hint", "مقدار را وارد کنید" if str(v).startswith("<") else "")}
                               for k, v in args[key].items()]
             req = ApprovalRequest(uuid.uuid4().hex[:10], name, _mask(args), t.risk, title, impact, rollback,
                                   inputs=inputs, input_target=target)
@@ -459,9 +467,6 @@ class RuleBrain:
         exists = name in [a.get("project_id") or a.get("name") for a in await s.client.list_apps()]
         res = await s.execute("deploy", {"source": source, "app": name, "create": not exists,
                                          "plan_id": plan.get("id"), "platform": an["platform"], "port": an["port"],
-                                         "envs": {k: (v["example"] if v["example"] and "<" not in v["example"] and
-                                                      not _has(k, "secret", "password", "token", "key") else f"<{k}>")
-                                                  for k, v in an["env_vars"].items()} or None,
                                          "_analysis": an})
         if isinstance(res, dict) and res.get("rejected"):
             return await s.say("انتشار لغو شد. اگر پلن یا نام دیگری می‌خواهید بگویید.")

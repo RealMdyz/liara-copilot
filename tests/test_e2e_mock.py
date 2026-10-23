@@ -40,7 +40,7 @@ def msgs(evs):
 def test_deploy_flow():
     async def go():
         s = Session(MockLiara())
-        evs = await run(s, f"پروژه‌ی {VICTIM} را دیپلوی کن")
+        evs = await run(s, f"پروژه‌ی {VICTIM} را دیپلوی کن", values={"DATABASE_URL": "postgres://u@h/db"})
         text = msgs(evs)
         assert "Node.js" in text
         assert any(e["type"] == "approval" and e["tool"] == "deploy" for e in evs)
@@ -153,4 +153,77 @@ def test_create_app_rejects_old_plans():
         assert "g2" in r["error"]
         r = await REGISTRY["create_app"].fn(Ctx(c, emit, {}), name="x-app", platform="node", plan_id="small-g2")
         assert r["created"] == "x-app"
+    asyncio.run(go())
+
+
+# ---------------------------------------------------------------- env vars
+import json, shutil, tempfile, types  # noqa: E402
+
+
+def _llm_session(client, script):
+    """Session whose LLM is scripted: each item is (tool_name, args) or a final text."""
+    os.environ["LLM_API_KEY"] = "x"
+    from copilot import config
+    config.LLM_API_KEY = "x"
+    s = Session(client)
+    config.LLM_API_KEY = ""
+    os.environ["LLM_API_KEY"] = ""
+    n = {"i": 0}
+
+    async def create(**kw):
+        st = script[min(n["i"], len(script) - 1)]
+        n["i"] += 1
+        if isinstance(st, str):
+            m = types.SimpleNamespace(content=st, tool_calls=None)
+        else:
+            m = types.SimpleNamespace(content="", tool_calls=[types.SimpleNamespace(
+                id=f"c{n['i']}", function=types.SimpleNamespace(name=st[0], arguments=json.dumps(st[1])))])
+        return types.SimpleNamespace(choices=[types.SimpleNamespace(message=m)])
+    s.brain.llm.chat.completions.create = create
+    return s
+
+
+def test_llm_deploy_without_envs_still_asks():
+    """Regression: the LLM called deploy with no envs and the user was never asked for DATABASE_URL."""
+    async def go():
+        c = MockLiara()
+        s = _llm_session(c, [("deploy", {"source": VICTIM, "app": "shop-new", "create": True}), "تمام شد"])
+        seen = {}
+        async def drive():
+            while True:
+                ev = await s.queue.get()
+                if ev["type"] == "approval":
+                    seen["ap"] = ev
+                    s.resolve(ev["id"], True, {"DATABASE_URL": "postgres://real/db"})
+                if ev["type"] == "busy" and ev["value"] is False:
+                    return
+        await asyncio.gather(s.handle("پروژه رو دیپلوی کن"), drive())
+        inputs = {i["key"]: i for i in seen["ap"]["inputs"]}
+        assert "DATABASE_URL" in inputs and inputs["DATABASE_URL"]["required"], seen["ap"]["inputs"]
+        assert "src/db.js" in inputs["DATABASE_URL"]["hint"]
+        envs = {e["key"]: e["value"] for e in c.apps["shop-new"]["envs"]}
+        assert envs["DATABASE_URL"] == "postgres://real/db"   # user's value, not the .env.example sample
+    asyncio.run(go())
+
+
+def test_deploy_prefills_from_project_dotenv_and_skips_existing():
+    async def go():
+        tmp = Path(tempfile.mkdtemp()) / "app"
+        shutil.copytree(VICTIM, tmp)
+        (tmp / ".env").write_text("DATABASE_URL=postgres://from-dotenv/db\n")
+        c = MockLiara()
+        s = Session(c)
+        evs = await run(s, f"پروژه‌ی {tmp} را دیپلوی کن")
+        ap = next(e for e in evs if e["type"] == "approval")
+        inp = {i["key"]: i for i in ap["inputs"]}
+        assert not inp["DATABASE_URL"]["required"] and ".env" in inp["DATABASE_URL"]["hint"]
+        name = ap["args"]["app"]
+        assert {e["key"]: e["value"] for e in c.apps[name]["envs"]}["DATABASE_URL"] == "postgres://from-dotenv/db"
+        # deploying a project without .env onto an app that already has the variable -> not asked again
+        evs2 = await run(Session(c), f"پروژه‌ی {VICTIM} را دیپلوی کن اسم shop-demo")
+        ap2 = next(e for e in evs2 if e["type"] == "approval")
+        assert "DATABASE_URL" not in {i["key"] for i in ap2["inputs"]}
+        assert any("آنلاین" in e.get("text", "") for e in evs2 if e["type"] == "message")
+        # secret values never land in the audit log
+        assert "from-dotenv" not in open(os.environ["AUDIT_LOG_PATH"]).read()
     asyncio.run(go())

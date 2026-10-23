@@ -36,6 +36,7 @@ class Tool:
     fn: Callable[..., Awaitable[Any]]
     approval: Callable[[dict], tuple[str, str, str]] | None = None
     required: tuple = ()
+    prepare: Callable[..., Awaitable[dict]] | None = None  # enriches args before the approval card
 
     def schema(self) -> dict:
         return {"type": "function", "function": {
@@ -47,11 +48,67 @@ APP = {"type": "string", "description": "نام اپ در لیارا (app name)"
 REGISTRY: dict[str, Tool] = {}
 
 
-def tool(name, description, params=None, risk=Risk.READ, required=(), approval=None):
+def tool(name, description, params=None, risk=Risk.READ, required=(), approval=None, prepare=None):
     def deco(fn):
-        REGISTRY[name] = Tool(name, description, params or {}, risk, fn, approval, tuple(required))
+        REGISTRY[name] = Tool(name, description, params or {}, risk, fn, approval, tuple(required), prepare)
         return fn
     return deco
+
+
+SECRETY = ("SECRET", "PASSWORD", "PASS", "TOKEN", "KEY", "PRIVATE")
+
+
+async def prepare_deploy(ctx: "Ctx", args: dict) -> dict:
+    """Make sure the user is asked for every environment variable the project needs.
+
+    Sources, in priority order:
+      1. values the user already gave (in chat / by the LLM)        -> optional input, pre-filled
+      2. the project's own .env file (never uploaded)                -> optional input, pre-filled
+      3. already configured on the Liara app                         -> kept, not asked again
+      4. otherwise                                                   -> REQUIRED input in the approval card
+    Example values from .env.example are only shown as a hint, never used silently.
+    """
+    source = args.get("source")
+    an = ctx.state.get("analysis")
+    if not an or an.get("source") != source:
+        an = await asyncio.to_thread(analyzer.analyze, source, await _paid_plans(ctx))
+        an["source"] = source
+        ctx.state["analysis"] = an
+    from pathlib import Path
+    dotenv = analyzer.dotenv_values(Path(an["path"]))
+    given = {k: str(v) for k, v in (args.get("envs") or {}).items()
+             if v not in (None, "") and not str(v).startswith("<")}
+    on_liara: set = set()
+    if not args.get("create"):
+        try:
+            on_liara = {e["key"] for e in await ctx.client.get_envs(args["app"])}
+        except Exception:
+            pass
+    keys = list(dict.fromkeys(list(an.get("env_vars", {})) + list(args.get("envs") or {}) + list(dotenv)))
+    envs, meta = {}, {}
+    for k in keys:
+        info = an.get("env_vars", {}).get(k, {})
+        ex = info.get("example", "")
+        where = info.get("used_at", "")
+        if k in given:
+            envs[k], meta[k] = given[k], {"required": False, "hint": "مقدار داده‌شده در گفت‌وگو (برای تغییر، مقدار جدید بنویسید)"}
+        elif k in dotenv and dotenv[k]:
+            envs[k], meta[k] = dotenv[k], {"required": False, "hint": "از فایل ‎.env‎ پروژه‌ی شما خوانده شد (خالی = همان مقدار)"}
+        elif k in on_liara:
+            continue
+        else:
+            envs[k] = f"<{k}>"
+            hint = f"در کد: {where}" if where else ""
+            if ex and not any(w in k.upper() for w in SECRETY):
+                hint += (" · " if hint else "") + f"نمونه: {ex}"
+            meta[k] = {"required": True, "hint": hint or "مقدار را وارد کنید"}
+    args = {**args, "envs": envs or None, "_env_meta": meta, "_analysis": an}
+    args.setdefault("platform", an["platform"])
+    args.setdefault("port", an["port"])
+    if args.get("create") and not args.get("plan_id"):
+        args["plan_id"] = (an.get("plan") or {}).get("id")
+    ctx.state["env_kept_on_liara"] = sorted(on_liara & set(keys))
+    return args
 
 
 # ============================================================ READ (auto-run)
@@ -260,9 +317,11 @@ async def create_app(ctx: Ctx, name: str, platform: str, plan_id: str):
 
 def _deploy_approval(a):
     an = a.get("_analysis") or {}
+    n_env = len(a.get("envs") or {})
     return (f"انتشار پروژه روی اپ «{a['app']}»" + (" (اپ جدید ساخته می‌شود)" if a.get("create") else ""),
             f"پلتفرم {a.get('platform') or an.get('platform')}، پورت {a.get('port') or an.get('port')}"
             + (f"، پلن {a.get('plan_id')}" if a.get("create") else "")
+            + (f"، {n_env} متغیر محیطی (پایین همین کارت)" if n_env else "، بدون متغیر محیطی جدید")
             + ". دیپلوی بدون قطعی انجام می‌شود اما نسخه‌ی فعلی جایگزین می‌شود.",
             "در صورت مشکل، به نسخه‌ی قبلی rollback می‌کنم.")
 
@@ -273,7 +332,7 @@ def _deploy_approval(a):
        "create": {"type": "boolean", "description": "اگر اپ وجود ندارد، ساخته شود"},
        "plan_id": {"type": "string"}, "platform": {"type": "string"}, "port": {"type": "integer"},
        "envs": {"type": "object", "description": "متغیرهای محیطی {KEY: VALUE}"}},
-      risk=Risk.HIGH, required=("source", "app"), approval=_deploy_approval)
+      risk=Risk.HIGH, required=("source", "app"), approval=_deploy_approval, prepare=prepare_deploy)
 async def deploy(ctx: Ctx, source: str, app: str, create: bool = False, plan_id: str | None = None,
                  platform: str | None = None, port: int | None = None, envs: dict | None = None):
     an = ctx.state.get("analysis")

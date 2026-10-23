@@ -343,7 +343,7 @@ function renderApproval(a){
   const crit=a.risk==='critical',r=RISK[a.risk]||['low',''];
   const impact=String(a.impact||''),nl=impact.indexOf('\n');
   const impactText=nl>0?impact.slice(0,nl):impact,cmds=nl>0?impact.slice(nl+1):'';
-  const inputs=(a.inputs||[]).map(i=>`<div><label>${esc(i.key)} ${i.required?'<span style="color:var(--yellow)">· لازم</span>':'· اختیاری (خالی = مقدار پیشنهادی)'}</label><input data-k="${esc(i.key)}" ${i.required?'data-req=1':''} placeholder="${esc(i.hint||'')}" autocomplete="off" spellcheck="false"></div>`).join('');
+  const inputs=(a.inputs||[]).map(i=>`<div><label><code>${esc(i.key)}</code> ${i.required?'<span style="color:var(--yellow)">· لازم</span>':'<span style="color:var(--green)">· آماده</span>'}</label><input data-k="${esc(i.key)}" ${i.required?'data-req=1':''} placeholder="${i.required?'مقدار را وارد کنید':'(بدون تغییر)'}" autocomplete="off" spellcheck="false">${i.hint?`<div style="font-size:11.5px;color:var(--muted);margin-top:5px">${md(i.hint)}</div>`:''}</div>`).join('');
   const c=add(el('card approval'+(crit?' critical':''),`
    <div class="hd"><span class="tt">🛡 نیاز به تأیید شما</span><span class="chip ${r[0]}">${esc(a.risk_label||r[1])}</span></div>
    <div class="bd"><div class="ap-grid">

@@ -61,9 +61,10 @@ def audit(event: str, **data):
     rec = {"ts": time.strftime("%Y-%m-%d %H:%M:%S"), "event": event, **data}
     # never write secrets: mask env values
     if "args" in rec and isinstance(rec["args"], dict):
-        args = dict(rec["args"])
-        if "variables" in args and isinstance(args["variables"], dict):
-            args["variables"] = {k: "***" for k in args["variables"]}
+        args = {k: v for k, v in rec["args"].items() if not str(k).startswith("_")}
+        for key in ("variables", "envs"):
+            if isinstance(args.get(key), dict):
+                args[key] = {k: "***" for k in args[key]}
         rec["args"] = args
     try:
         with open(config.AUDIT_LOG_PATH, "a", encoding="utf-8") as f:

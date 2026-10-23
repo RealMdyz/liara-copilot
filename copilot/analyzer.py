@@ -133,6 +133,30 @@ def find_env_vars(root: Path) -> dict[str, str]:
     return found
 
 
+def _parse_env_file(p: Path) -> dict[str, str]:
+    out = {}
+    for line in p.read_text(errors="ignore").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        k = k.replace("export ", "").strip()
+        v = v.strip().strip('"').strip("'")
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k):
+            out[k] = v
+    return out
+
+
+def dotenv_values(root: Path) -> dict[str, str]:
+    """Values from the project's own .env / .env.local (never uploaded; used to pre-fill env vars)."""
+    out: dict[str, str] = {}
+    for name in (".env", ".env.local", ".env.production"):
+        p = root / name
+        if p.exists():
+            out.update(_parse_env_file(p))
+    return out
+
+
 def example_env(root: Path) -> dict[str, str]:
     out = {}
     for name in (".env.example", ".env.sample", "env.example"):
@@ -229,6 +253,7 @@ def analyze(source: str, plans: dict | None = None) -> dict:
     port, port_src = detect_port(root, platform)
     envs = find_env_vars(root)
     examples = example_env(root)
+    dotenv = dotenv_values(root)
     needs = estimate_needs(root, platform)
     rec = recommend_plan(plans or {}, needs["ram_gb"]) if plans is not None else None
     warnings = []
@@ -241,7 +266,9 @@ def analyze(source: str, plans: dict | None = None) -> dict:
     return {
         "path": str(root), "platform": platform, "platform_fa": PLATFORM_FA.get(platform, platform),
         "reasons": reasons, "port": port, "port_source": port_src,
-        "env_vars": {k: {"used_at": v, "example": examples.get(k, "")} for k, v in envs.items()},
+        "env_vars": {k: {"used_at": envs.get(k, ".env.example"), "example": examples.get(k, ""),
+                         "in_dotenv": k in dotenv}
+                     for k in list(envs) + [k for k in examples if k not in envs and k not in SKIP_ENVS]},
         "needs": needs, "plan": rec, "warnings": warnings,
     }
 
